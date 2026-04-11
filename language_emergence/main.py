@@ -3,7 +3,7 @@ import json
 import torch
 import os
 
-from configs.experiment_configs import ExperimentConfig
+from configs.experiment_config import ExperimentConfig
 # TODO: implement these modules
 from src.rl.teacher import generate_q_matrices
 from src.models.autoencoder import train_language_model
@@ -20,21 +20,21 @@ def main():
     config = ExperimentConfig()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    os.makedirs(config['data_dir'], exist_ok=True)
+    os.makedirs(config.data_dir, exist_ok=True)
 
     # STAGE 1: Q-Matrix Generation (Teacher)
     if args.stage in ['all', 'generate_teacher']:
         print("--- Starting Teacher Q-Matrix Generation ---")
         # from cell 17
         q_matrices, label_dict, wall_state_dict = generate_q_matrices(config, device)
-        # Save these to config['data_dir']
+        # Save these to config.data_dir
 
     # STAGE 2: Autoencoder Training (Language Generation)
     if args.stage in ['all', 'train_language']:
         print("--- Starting Language Training (Autoencoder) ---")
         # from cell 18
         model, losses = train_language_model(config, device)
-        # Save model weights to config['data_dir']
+        # Save model weights to config.data_dir
 
     # STAGE 3: Student Performance Evaluation
     if args.stage in ['all', 'evaluate']:
