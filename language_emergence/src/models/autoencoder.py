@@ -6,16 +6,16 @@ from torch.utils.data import DataLoader
 
 class Autoencoder(nn.Module):
 
-    def __init__(self, in_channels, maze_dim, num_channels, filter_dim, kernel_dim, K):
+    def __init__(self, in_channels, maze_dim, num_channels, kernel_dim, K):
         super().__init__()
 
         # encoder layers
-        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=num_channels, kernel_size=kernel_dim, padding=filter_dim-1)
-        self.conv2 = nn.Conv2d(in_channels=num_channels, out_channels=num_channels, kernel_size=kernel_dim, padding=filter_dim-1)
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=num_channels, kernel_size=kernel_dim, padding=kernel_dim-1)
+        self.conv2 = nn.Conv2d(in_channels=num_channels, out_channels=num_channels, kernel_size=kernel_dim, padding=kernel_dim-1)
         
         conv1_shape = self.output_dim((in_channels, maze_dim, maze_dim), self.conv1)
         conv2_shape = self.output_dim(conv1_shape, self.conv2)
-        flattened_size = conv2_shape[1]*conv2_shape[2]*conv2_shape[3]
+        flattened_size = conv2_shape[0]*conv2_shape[1]*conv2_shape[2]
 
         self.flatten = nn.Flatten()
         self.linear1 = nn.Linear(flattened_size, K)
@@ -23,13 +23,13 @@ class Autoencoder(nn.Module):
         # decoder layers
         self.linear2 = nn.Linear(K, flattened_size)
         self.unflatten = nn.Unflatten(1, conv2_shape)
-        self.deconv1 = nn.ConvTranspose2d(in_channels=conv2_shape[1], out_channels=num_channels, kernel_size=kernel_dim, padding=filter_dim-1)
-        self.deconv2 = nn.ConvTranspose2d(in_channels=num_channels, out_channels=in_channels, kernel_size=kernel_dim, padding=filter_dim-1)
+        self.deconv1 = nn.ConvTranspose2d(in_channels=conv2_shape[0], out_channels=num_channels, kernel_size=kernel_dim, padding=kernel_dim-1)
+        self.deconv2 = nn.ConvTranspose2d(in_channels=num_channels, out_channels=in_channels, kernel_size=kernel_dim, padding=kernel_dim-1)
                                           
     def output_dim(self, input_dim, conv_layer):
 
-        h_in = input_dim[2]
-        w_in = input_dim[3]
+        h_in = input_dim[-2]
+        w_in = input_dim[-1]
 
         padding = conv_layer.padding if isinstance(conv_layer.padding, tuple) else (conv_layer.padding,)
         kernel_size = conv_layer.kernel_size if isinstance(conv_layer.kernel_size, tuple) else (conv_layer.kernel_size,)
@@ -61,6 +61,7 @@ class Autoencoder(nn.Module):
 def trainSAE(autoencoder, training_data, kappa, optim, batch_size, epochs, device):
 
     dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
+    autoencoder.train()
 
     total_losses = []
     recon_losses = []
@@ -73,30 +74,60 @@ def trainSAE(autoencoder, training_data, kappa, optim, batch_size, epochs, devic
         epoch_sparsity_loss = 0.0 
 
         for q_matrices, _ in dataloader:
-            optim.zero_grad(set_to_none = True)
+
             q_matrices = q_matrices.to(device)
 
+            optim.zero_grad(set_to_none=True)
             messages, q_recons = autoencoder(q_matrices)
-
-            batch_recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons,2)**2
+            batch_recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons, 2)**2
             batch_sparsity_loss = kappa * torch.norm(messages, 1)
             batch_loss = batch_recon_loss + batch_sparsity_loss
-
-            epoch_loss += batch_loss.detach()
-            epoch_recon_loss += batch_recon_loss.detach()
-            epoch_sparsity_loss += batch_sparsity_loss.detach()
-
             batch_loss.backward()
             optim.step()
             
-            all_messages.append(messages)
+            epoch_loss += batch_loss.detach()
+            epoch_recon_loss += batch_recon_loss.detach()
+            epoch_sparsity_loss += batch_sparsity_loss.detach()
+            all_messages.append(messages.detach())
 
         total_losses.append(epoch_loss)
         recon_losses.append(epoch_recon_loss)
         sparsity_losses.append(epoch_sparsity_loss)
 
+        print(f"total loss: {epoch_loss}\nreconstruction loss: {epoch_recon_loss}\nsparsity loss: {epoch_sparsity_loss}\n")
+
     autoencoder.to('cpu')
     return torch.tensor(total_losses).cpu(), torch.tensor(recon_losses).cpu(), torch.tensor(sparsity_losses).cpu(), all_messages
+
+def testSAE(autoencoder, test_data, batch_size, kappa, device):
+
+    dataloader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
+
+    total_losses = []
+    recon_losses = []
+    sparsity_losses = []
+    all_messages = []
+
+    autoencoder.to(device)
+    autoencoder.eval()
+
+    with torch.no_grad():
+
+        for q_matrices, labels in dataloader:
+
+            messages, q_recons = autoencoder(q_matrices.to(device))
+            recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons, 2)**2
+            sparsity_loss = kappa * torch.norm(messages, 1)
+            total_loss = recon_loss + sparsity_loss
+
+            total_losses.append(total_loss)
+            recon_losses.append(recon_loss)
+            sparsity_losses.append(sparsity_loss)
+            all_messages.append(messages.detach())
+
+            print(f"total loss: {total_loss}\nreconstruction loss: {recon_loss}\nsparsity loss: {sparsity_loss}\n")
+
+    return torch.tensor(total_losses), torch.tensor(recon_losses), torch.tensor(sparsity_losses), all_messages
 
 
 
