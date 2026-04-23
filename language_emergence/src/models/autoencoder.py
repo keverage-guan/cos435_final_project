@@ -1,4 +1,4 @@
-# Convolutional Autoencoder
+# Convolutional Autoencoder, based on cells 13 and 14
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,7 +36,7 @@ class Autoencoder(nn.Module):
         dilation = conv_layer.dilation if isinstance(conv_layer.dilation, tuple) else (conv_layer.dilation,)
         stride = conv_layer.stride if isinstance(conv_layer.stride, tuple) else (conv_layer.stride,)
 
-        # from https://docs.pytorch.org/docs/stable/generated/torch.nn.Conv2d.html
+        # https://docs.pytorch.org/docs/stable/generated/torch.nn.Conv2d.html
         h_out = (h_in + 2 * padding[0] - dilation[0] * (kernel_size[0] - 1) - 1) // stride[0] + 1
         w_out = (w_in + 2 * padding[-1] - dilation[-1] * (kernel_size[-1] - 1) - 1) // stride[-1] + 1
 
@@ -72,6 +72,8 @@ def trainSAE(autoencoder, training_data, kappa, optim, batch_size, epochs, devic
         epoch_loss = 0.0
         epoch_recon_loss = 0.0
         epoch_sparsity_loss = 0.0 
+
+        all_messages = []
 
         for q_matrices, _ in dataloader:
 
@@ -114,8 +116,8 @@ def testSAE(autoencoder, test_data, batch_size, kappa, device):
     with torch.no_grad():
 
         for q_matrices, labels in dataloader:
-
-            messages, q_recons = autoencoder(q_matrices.to(device))
+            q_matrices = q_matrices.to(device)
+            messages, q_recons = autoencoder(q_matrices)
             recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons, 2)**2
             sparsity_loss = kappa * torch.norm(messages, 1)
             total_loss = recon_loss + sparsity_loss
