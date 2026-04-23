@@ -341,8 +341,8 @@ def generate_q_matrices(config: ExperimentConfig,
     label_dict      - maps task index to [wall_index, init_state, goal_state]
     wall_state_dict - maps wall index to list of wall states
     '''
-    label_path = f"data/teacher/label dictionaries/q_matrices_labels{config.qmat_read_code}.pkl"
-    wall_path = f"data/teacher/wall state dictionaries/wall_states{config.qmat_read_code}.pkl"
+    label_path = f"../data/teacher/label dictionaries/q_matrices_labels{config.qmat_read_code}.pkl"
+    wall_path = f"../data/teacher/wall state dictionaries/wall_states{config.qmat_read_code}.pkl"
 
     with open(label_path, 'rb') as f:
         label_dict = pickle.load(f)
@@ -350,7 +350,7 @@ def generate_q_matrices(config: ExperimentConfig,
         wall_state_dict = pickle.load(f)
 
     if not config.qmat_gen:
-        qmat_path = f"data/teacher/q matrix dictionaries/q_matrices{config.qmat_read_code}.pkl"
+        qmat_path = f"../data/teacher/q matrix dictionaries/q_matrices{config.qmat_read_code}.pkl"
         with open(qmat_path, 'rb') as f:
             q_matrices = pickle.load(f)
         return q_matrices, label_dict, wall_state_dict
@@ -358,8 +358,8 @@ def generate_q_matrices(config: ExperimentConfig,
     perfect_qdict = q_matrix_generator_deterministic(label_dict, wall_state_dict, config, device)
     q_matrices = q_matrix_generator(label_dict, wall_state_dict, perfect_qdict, config, device)
 
-    os.makedirs("data/teacher/q matrix dictionaries", exist_ok=True)
-    save_path = f"data/teacher/q matrix dictionaries/q_matrices{config.qmat_read_code}.pkl"
+    os.makedirs("../data/teacher/q matrix dictionaries", exist_ok=True)
+    save_path = f"../data/teacher/q matrix dictionaries/q_matrices{config.qmat_read_code}.pkl"
     with open(save_path, 'wb') as f:
         pickle.dump(q_matrices, f)
 
