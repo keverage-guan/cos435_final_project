@@ -58,7 +58,7 @@ class Autoencoder(nn.Module):
 
         return message, q_recon
 
-def trainSAE(autoencoder, training_data, kappa, optim, batch_size, epochs, device):
+def trainSAE(autoencoder, training_data, gamma_sparse, optim, batch_size, epochs, device):
 
     dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
     autoencoder.train()
@@ -69,11 +69,10 @@ def trainSAE(autoencoder, training_data, kappa, optim, batch_size, epochs, devic
     all_messages = []
 
     for _ in range(epochs):
+
         epoch_loss = 0.0
         epoch_recon_loss = 0.0
         epoch_sparsity_loss = 0.0 
-
-        all_messages = []
 
         for q_matrices, _ in dataloader:
 
@@ -81,9 +80,12 @@ def trainSAE(autoencoder, training_data, kappa, optim, batch_size, epochs, devic
 
             optim.zero_grad(set_to_none=True)
             messages, q_recons = autoencoder(q_matrices)
-            batch_recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons, 2)**2
-            batch_sparsity_loss = kappa * torch.norm(messages, 1)
+
+            # batch_recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons, 2)**2
+            batch_recon_loss = (1-gamma_sparse) * torch.norm(q_matrices - q_recons, 2)
+            batch_sparsity_loss = gamma_sparse * torch.norm(messages, 1)
             batch_loss = batch_recon_loss + batch_sparsity_loss
+            
             batch_loss.backward()
             optim.step()
             
@@ -101,7 +103,7 @@ def trainSAE(autoencoder, training_data, kappa, optim, batch_size, epochs, devic
     autoencoder.to('cpu')
     return torch.tensor(total_losses).cpu(), torch.tensor(recon_losses).cpu(), torch.tensor(sparsity_losses).cpu(), all_messages
 
-def testSAE(autoencoder, test_data, batch_size, kappa, device):
+def testSAE(autoencoder, test_data, batch_size, gamma_sparse, device):
 
     dataloader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
@@ -116,10 +118,12 @@ def testSAE(autoencoder, test_data, batch_size, kappa, device):
     with torch.no_grad():
 
         for q_matrices, labels in dataloader:
+
             q_matrices = q_matrices.to(device)
             messages, q_recons = autoencoder(q_matrices)
-            recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons, 2)**2
-            sparsity_loss = kappa * torch.norm(messages, 1)
+            # recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons, 2)**2
+            recon_loss = (1-gamma_sparse) * torch.norm(q_matrices - q_recons, 2)
+            sparsity_loss = gamma_sparse * torch.norm(messages, 1)
             total_loss = recon_loss + sparsity_loss
 
             total_losses.append(total_loss)
@@ -130,9 +134,6 @@ def testSAE(autoencoder, test_data, batch_size, kappa, device):
             print(f"total loss: {total_loss}\nreconstruction loss: {recon_loss}\nsparsity loss: {sparsity_loss}\n")
 
     return torch.tensor(total_losses), torch.tensor(recon_losses), torch.tensor(sparsity_losses), all_messages
-
-
-
 
 
     

@@ -38,26 +38,3 @@ total_losses, recon_losses, sparsity_losses, all_messages = trainSAE(autoencoder
 
 # getting messages from trained language
 _, _, _, all_messages = testSAE(autoencoder, test_dataset, batch_size, kappa, device)
-
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
-
-# Stack all messages into a single tensor
-messages = torch.cat(all_messages, dim=0)  # shape: (num_tasks, K)
-messages_np = messages.numpy()
-
-pca = PCA(n_components=5)
-pca_result = pca.fit_transform(messages_np)
-
-# Plot explained variance (Fig 2a(i))
-plt.bar(range(1, 6), pca.explained_variance_ratio_ * 100)
-plt.xlabel('PC index')
-plt.ylabel('Variance explained (%)')
-plt.ylim(0, 100)
-plt.savefig('variance.png')
-
-# Fig 2a(ii) - color by wall position
-# plt.scatter(pca_result[:, 0], pca_result[:, 1], c=wall_labels)
-
-# Fig 2a(iii) - color by goal location  
-# plt.scatter(pca_result[:, 0], pca_result[:, 1], c=goal_labels)
