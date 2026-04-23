@@ -4,18 +4,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class DQN(nn.Module):
     '''
     Deep Q Network class
     '''
 
-    def __init__(self, K: int, zero_init: bool = False, n_actions: int = 4, device=None):
+    def __init__(self, K: int, n_actions: int, device: torch.device, zero_init: bool = False):
         '''
         INPUT
         K: length of input message (zero for the teacher)
-        zero_init: initialize all weights to zero?
-        n_actions: number of possible actions (defaults to 4 from notebook)
+        n_actions: number of possible actions
         device: torch device specification
+        zero_init: initialize all weights to zero?
         '''
         super(DQN, self).__init__()
         self.lin1 = nn.Linear(2 + K, 10, device=device) # input size is 2(gridworld coordinates) + length of message
@@ -53,12 +54,13 @@ class BiasLayer(nn.Module):
     '''
     Bias Layer (add bias to individual network nodes/filter positions)
     '''
-    def __init__(self, shape: tuple, device=None):
+    def __init__(self, shape: tuple, device: torch.device):
         '''
         Initialise parameters of bias layer
         ---
         INPUT
         shape: Requisite shape of bias layer
+        device: torch device specification
         '''
         super(BiasLayer, self).__init__()
         init_bias = torch.zeros(shape, device=device)

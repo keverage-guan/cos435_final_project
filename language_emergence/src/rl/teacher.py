@@ -265,7 +265,7 @@ def q_matrix_generator(label_dict: 'dict[int, list]',
         counter = 0
         while counter < config.max_attempts and not good_qmatrix:
             ep_steps = np.zeros(num_eps)
-            teacher = DQN(K=0, config=config, device=device)
+            teacher = DQN(K=0, n_actions=config.n_actions, device=device)
             message = torch.tensor([], device=device)
             optimizer = torch.optim.Adam(teacher.parameters(), lr=config.lr_teacher, weight_decay=0)
 
