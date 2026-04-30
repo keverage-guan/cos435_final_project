@@ -6,7 +6,7 @@ import os
 from configs.experiment_config import ExperimentConfig
 # TODO: implement these modules
 from src.rl.teacher import generate_q_matrices
-from src.models.autoencoder import train_language_model
+from src.models.autoencoder import trainSAE
 from src.evaluation.student_eval import run_evaluations
 from src.utils.plotting import generate_all_plots
 
@@ -33,7 +33,7 @@ def main():
     if args.stage in ['all', 'train_language']:
         print("--- Starting Language Training (Autoencoder) ---")
         # from cell 18
-        model, losses = train_language_model(config, device)
+        model, losses = trainSAE(config, device)
         # Save model weights to config.data_dir
 
     # STAGE 3: Student Performance Evaluation
