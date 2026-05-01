@@ -129,6 +129,123 @@ def train_student(label_dict, wall_state_dict, sopt_dict, message_dict, config, 
             print(f"Epoch {ep + 1}/{num_eps} completed")
 
     return student
+
+def train_student_with_feedback(label_dict, wall_state_dict, sopt_dict, q_matrix_dict, autoencoder, student, config, device, num_eps=750, max_steps=50):
+
+    #initialize network and optimizer
+    optimizer = torch.optim.Adam(list(autoencoder.parameters()) + list(student.parameters()), lr=config.lr_teacher)
+    
+    kappa = getattr(config, 'kappa', 0.05)
+    gamma_sparse = getattr(config, 'gamma_sparse', 0.1)
+    zeta_std = getattr(config, 'zeta_std', 5.0) 
+
+    autoencoder.train()
+    student.train()
+
+    tasks_data = []
+    
+    #iterate over gridworlds
+    for task, (wall_index, init_state, goal_state) in tqdm(label_dict.items(), desc="Precomputing tasks"):
+        wall_states = wall_state_dict[wall_index]
+        
+        G = graph_from_walls(wall_states, config)
+        if not nx.is_connected(G):
+            continue
+
+        #initialize environment
+        env = SquareGridworld(init_state, goal_state, wall_states, config)
+        outcomes = env.get_outcomes()
+        
+        #dictionary to retreive next state and reward given current (s,a)
+        next_states_dict = {}
+        for s in range(config.grid_dim**2):
+            next_states = []
+            for a in range(config.n_actions):
+                ns, _ = outcomes[(s, a)]
+                if ns is None:
+                    ns = goal_state
+                next_states.append(ns)
+            next_states_dict[s] = next_states
+
+        probas_transformer = torch.zeros(
+            (config.n_actions * config.grid_dim**2, config.grid_dim**2 * config.grid_dim**2),
+            device=device
+        )
+
+        for s in range(config.grid_dim**2):
+            if s == goal_state:
+                for a in range(config.n_actions):
+                    probas_transformer[a * config.grid_dim**2 + s, s * config.grid_dim**2 + s] = 1
+            else:
+                for a, ns in enumerate(next_states_dict[s]):
+                    probas_transformer[a * config.grid_dim**2 + s, s * config.grid_dim**2 + ns] = 1
+
+        state_tensors = []
+        for s in range(config.grid_dim**2):
+            st = state_int_to_tuple(s, config, device)[0] 
+            state_tensors.append(st)
+        all_states_tensor = torch.stack(state_tensors)
+
+        tasks_data.append({
+            'task': task,
+            'init_state': init_state,
+            'goal_state': goal_state,
+            'opt_steps': sopt_dict.get(task, max_steps),
+            'original_q': q_matrix_dict[task].unsqueeze(0).to(device),
+            'all_states_tensor': all_states_tensor,
+            'probas_transformer': probas_transformer
+        })
+    
+    #now the actual training loop
+    for ep in tqdm(range(num_eps), desc="Joint Training (Epochs)"):
+        random.shuffle(tasks_data)
+        
+        #set to none is very important as otherwise often some small gradients remain!!
+        optimizer.zero_grad(set_to_none=True)
+        
+        for t_data in tasks_data:
+            #do a forward pass of the autoencoder, i.e. encoding and decoding
+            original_q = t_data['original_q']
+            message, q_recon = autoencoder(original_q)
+            flat_message = message.squeeze() 
+            
+            #student decoding - the student network creates its q-matrix from the message(s)
+            message_rep = flat_message.unsqueeze(0).expand(config.grid_dim**2, -1)
+            input_batch = torch.cat([t_data['all_states_tensor'], message_rep], dim=1)
+            Q = student(input_batch) 
+            
+            #get action probabilities as softmax of the Q-values
+            action_probas = torch.nn.functional.softmax(Q, dim=1)
+            action_probas_flat = action_probas.t().flatten().unsqueeze(0) 
+            matrix_big_flat = action_probas_flat @ t_data['probas_transformer'] 
+            
+            #create a big transition matrix
+            matrix_big = matrix_big_flat.view(config.grid_dim**2, config.grid_dim**2).t()
+            
+            #For each student step, Apply the transition matrix to the initial probability distribution to get the new probability distribution
+            goal_proba = torch.linalg.matrix_power(matrix_big, t_data['opt_steps'])[t_data['goal_state'], t_data['init_state']]
+            
+            #first part - probability to find the goal (difference to 1)
+            student_loss_p1 = (1 - kappa) * ((1 - goal_proba) ** 4)
+            #second part - keep overall Q-values low to avoid some local minima and enhance overall stability
+            student_loss_p2 = (kappa / mt.sqrt(config.grid_dim**2 * config.n_actions)) * torch.norm(Q, 2)
+            student_loss = student_loss_p1 + student_loss_p2
+            
+            # Loss calculation for the autoencoder
+            recon_loss = torch.norm(original_q - q_recon, 2)
+            sparse_loss = torch.norm(message, 1)
+            
+            #overall loss is a combination
+            batch_loss = (1 - gamma_sparse) * recon_loss + gamma_sparse * sparse_loss + zeta_std * student_loss
+            
+            #changing of the gradients according to the loss
+            batch_loss.backward() 
+            optimizer.step()
+            
+            #set to none is very important as otherwise often some small gradients remain!!
+            optimizer.zero_grad(set_to_none=True)
+
+    return autoencoder, student
     
 def run_evaluations(student, label_dict, wall_state_dict, message_dict, sopt_dict, config, device):
     
