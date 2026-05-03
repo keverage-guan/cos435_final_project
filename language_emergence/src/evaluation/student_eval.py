@@ -343,6 +343,9 @@ def close_the_loop(student, autoencoder, label_dict, wall_state_dict,
     The telephone game: encode the student's learned policy back through the frozen SAE
     to produce degraded messages, then train a 2nd-generation student on those messages.
 
+    To match the paper, pass the student and autoencoder returned by
+    train_student_with_feedback() (jointly trained with feedback loss).
+
     Returns (student_gen2, student_message_dict) where student_message_dict holds the
     re-encoded messages that student_gen2 was trained on.
     '''
