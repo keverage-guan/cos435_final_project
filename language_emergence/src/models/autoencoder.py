@@ -98,8 +98,6 @@ def trainSAE(autoencoder, training_data, gamma_sparse, optim, batch_size, epochs
         recon_losses.append(epoch_recon_loss)
         sparsity_losses.append(epoch_sparsity_loss)
 
-        print(f"total loss: {epoch_loss}\nreconstruction loss: {epoch_recon_loss}\nsparsity loss: {epoch_sparsity_loss}\n")
-
     autoencoder.to('cpu')
     return torch.tensor(total_losses).cpu(), torch.tensor(recon_losses).cpu(), torch.tensor(sparsity_losses).cpu(), all_messages
 
@@ -111,6 +109,7 @@ def testSAE(autoencoder, test_data, batch_size, gamma_sparse, device):
     recon_losses = []
     sparsity_losses = []
     all_messages = []
+    message_dict = {}
 
     autoencoder.to(device)
     autoencoder.eval()
@@ -131,9 +130,14 @@ def testSAE(autoencoder, test_data, batch_size, gamma_sparse, device):
             sparsity_losses.append(sparsity_loss)
             all_messages.append(messages.detach())
 
-            print(f"total loss: {total_loss}\nreconstruction loss: {recon_loss}\nsparsity loss: {sparsity_loss}\n")
+            # doing this so can more easily pass messages to student in student training
+            for i in range(len(messages)):
+                wall_label = labels[0][i].item()
+                init_state = labels[1][i].item()
+                goal_state = labels[2][i].item()
+                message_dict[(wall_label, init_state, goal_state)] = messages[i].detach()
 
-    return torch.tensor(total_losses), torch.tensor(recon_losses), torch.tensor(sparsity_losses), all_messages
+    return torch.tensor(total_losses), torch.tensor(recon_losses), torch.tensor(sparsity_losses), all_messages, message_dict
 
 
     
