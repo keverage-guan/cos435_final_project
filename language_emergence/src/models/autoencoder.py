@@ -58,7 +58,7 @@ class Autoencoder(nn.Module):
 
         return message, q_recon
 
-def trainSAE(autoencoder, training_data, gamma_sparse, optim, batch_size, epochs, device):
+def trainSAE(autoencoder, training_data, gamma_sparse, optim, batch_size, epochs, device, reshape=False):
 
     dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
     autoencoder.train()
@@ -77,6 +77,8 @@ def trainSAE(autoencoder, training_data, gamma_sparse, optim, batch_size, epochs
         for q_matrices, _ in dataloader:
 
             q_matrices = q_matrices.to(device)
+            if reshape:
+                q_matrices = q_matrices.reshape(q_matrices.shape[0], 4, 4, 4)
 
             optim.zero_grad(set_to_none=True)
             messages, q_recons = autoencoder(q_matrices)
@@ -101,7 +103,7 @@ def trainSAE(autoencoder, training_data, gamma_sparse, optim, batch_size, epochs
     autoencoder.to('cpu')
     return torch.tensor(total_losses).cpu(), torch.tensor(recon_losses).cpu(), torch.tensor(sparsity_losses).cpu(), all_messages
 
-def testSAE(autoencoder, test_data, batch_size, gamma_sparse, device):
+def testSAE(autoencoder, test_data, batch_size, gamma_sparse, device, reshape=False):
 
     dataloader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
@@ -119,6 +121,8 @@ def testSAE(autoencoder, test_data, batch_size, gamma_sparse, device):
         for q_matrices, labels in dataloader:
 
             q_matrices = q_matrices.to(device)
+            if reshape:
+                q_matrices = q_matrices.reshape(q_matrices.shape[0], 4, 4, 4)
             messages, q_recons = autoencoder(q_matrices)
             # recon_loss = (1-kappa) * torch.norm(q_matrices - q_recons, 2)**2
             recon_loss = (1-gamma_sparse) * torch.norm(q_matrices - q_recons, 2)
