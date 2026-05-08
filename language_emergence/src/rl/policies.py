@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 
 from configs.experiment_config import ExperimentConfig
-from src.env.gridworld import state_int_to_tuple
 from src.models.dqn import DQN
 
 
@@ -49,7 +48,7 @@ def select_action_optimism(agent: DQN, state_int: int, message: torch.Tensor,
     OUTPUT
     action (0:right, 1:up, 2:left, 3:down)
     '''
-    state = state_int_to_tuple(state_int, config, device)
+    state = env.state_int_to_tuple(state_int, config, device)
     current_sa_counts = torch.tensor(
         [sa_counts[(state_int, a)] for a in range(config.n_actions)], device=device
     )
@@ -63,7 +62,7 @@ def select_action_optimism(agent: DQN, state_int: int, message: torch.Tensor,
 def select_action_eps_trust(agent: DQN, state_int: int, probas_message_matrix: torch.Tensor,
                             softy: nn.Softmax, iota: float, trust: float,
                             current_ep: int, total_eps: int,
-                            config: ExperimentConfig, device: torch.device) -> 'tuple[torch.Tensor, torch.Tensor, int]':
+                            config: ExperimentConfig, device: torch.device, env) -> 'tuple[torch.Tensor, torch.Tensor, int]':
     '''
     Epsilon-greedy action selection with global teacher trust parameter.
     ---
@@ -84,7 +83,7 @@ def select_action_eps_trust(agent: DQN, state_int: int, probas_message_matrix: t
     probas_student  - action probabilities from student Q-values at current state
     action          - selected action
     '''
-    state = state_int_to_tuple(state_int, config, device)
+    state = env.state_int_to_tuple(state_int, config, device)
     with torch.no_grad():
         # 1. message
         probas_message = probas_message_matrix[:, state_int // config.grid_dim, state_int % config.grid_dim]
@@ -105,7 +104,7 @@ def select_action_eps_trust(agent: DQN, state_int: int, probas_message_matrix: t
 
 def select_action_eps_trust_uninfo(agent: DQN, state_int: int, softy: nn.Softmax,
                                    iota: float, current_ep: int, total_eps: int,
-                                   config: ExperimentConfig, device: torch.device) -> 'tuple[torch.Tensor, int]':
+                                   config: ExperimentConfig, device: torch.device, env) -> 'tuple[torch.Tensor, int]':
     '''
     Epsilon-greedy action selection without a teacher (uninformed baseline).
     ---
@@ -123,7 +122,7 @@ def select_action_eps_trust_uninfo(agent: DQN, state_int: int, softy: nn.Softmax
     probas_student - action probabilities from student Q-values at current state
     action         - selected action
     '''
-    state = state_int_to_tuple(state_int, config, device)
+    state = env.state_int_to_tuple(state_int, config, device)
     with torch.no_grad():
         # 1. student
         qvals_student = agent(state[0])
@@ -141,7 +140,7 @@ def select_action_eps_trust_uninfo(agent: DQN, state_int: int, softy: nn.Softmax
 def select_action_opt_trust(agent: DQN, state_int: int, probas_message_matrix: torch.Tensor,
                             softy: nn.Softmax, iota: float, trust: float, alpha: float,
                             sa_counts: 'dict[tuple[int, int], int]',
-                            config: ExperimentConfig, device: torch.device) -> 'tuple[torch.Tensor, torch.Tensor, int]':
+                            config: ExperimentConfig, device: torch.device, env) -> 'tuple[torch.Tensor, torch.Tensor, int]':
     '''
     Optimism-in-face-of-uncertainty action selection with global teacher trust parameter.
     ---
@@ -162,7 +161,7 @@ def select_action_opt_trust(agent: DQN, state_int: int, probas_message_matrix: t
     probas_student  - action probabilities from student Q-values at current state
     action          - selected action
     '''
-    state = state_int_to_tuple(state_int, config, device)
+    state = env.state_int_to_tuple(state_int, config, device)
     current_sa_counts = torch.tensor(
         [sa_counts[(state_int, a)] for a in range(config.n_actions)], device=device
     )
@@ -182,7 +181,7 @@ def select_action_opt_trust(agent: DQN, state_int: int, probas_message_matrix: t
 def select_action_opt_trust_uninfo(agent: DQN, state_int: int, softy: nn.Softmax,
                                    iota: float, alpha: float,
                                    sa_counts: 'dict[tuple[int, int], int]',
-                                   config: ExperimentConfig, device: torch.device) -> 'tuple[torch.Tensor, int]':
+                                   config: ExperimentConfig, device: torch.device, env) -> 'tuple[torch.Tensor, int]':
     '''
     Optimism-in-face-of-uncertainty action selection without a teacher (uninformed baseline).
     ---
@@ -200,7 +199,7 @@ def select_action_opt_trust_uninfo(agent: DQN, state_int: int, softy: nn.Softmax
     probas - action probabilities from student Q-values at current state
     action - selected action
     '''
-    state = state_int_to_tuple(state_int, config, device)
+    state = env.state_int_to_tuple(state_int, config, device)
     current_sa_counts = torch.tensor(
         [sa_counts[(state_int, a)] for a in range(config.n_actions)], device=device
     )
