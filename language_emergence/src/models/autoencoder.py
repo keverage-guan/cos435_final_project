@@ -135,7 +135,7 @@ def testSAE(autoencoder, test_data, batch_size, gamma_sparse, device, reshape=Fa
             all_messages.append(messages.detach())
 
             # doing this so can more easily pass messages to student in student training
-            for i in range(len(messages)):
+            for i in range(len(labels[0])):
                 wall_label = labels[0][i].item()
                 init_state = labels[1][i].item()
                 goal_state = labels[2][i].item()
