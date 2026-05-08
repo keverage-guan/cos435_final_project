@@ -431,7 +431,7 @@ def value_iteration_all_tasks(label_dict, wall_state_dict, config, device):
     sopt_dict = {}
     for task, (wall_index, init_state, goal_state, demand) in label_dict.items():
         wall_states = wall_state_dict[wall_index]
-        env = InventoryManagement(init_state, goal_state, wall_states, config)
+        env = InventoryManagement(init_state, goal_state, wall_states, config, demand)
         perfect_qdict[task] = value_iteration(env, config, device)
         sopt_dict[task] = abs(goal_state - init_state)
     return perfect_qdict, sopt_dict
@@ -446,7 +446,7 @@ def q_matrix_generator_inventory(label_dict, wall_state_dict, perfect_qdict, con
         wall_states = wall_state_dict[wall_index]
         print(f"task is {task}")
 
-        env = InventoryManagement(init_state, goal_state, wall_states, config)
+        env = InventoryManagement(init_state, goal_state, wall_states, config, demand)
         outcomes = env.get_outcomes()
 
         transition_index_dict, batches_list = transition_memories(env, init_state, goal_state, wall_states, config, device)
