@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))   # language_emergence/
+PROJECT_ROOT = os.path.dirname(BASE_DIR)                    # project root (where data/ lives)
 sys.path.insert(0, BASE_DIR)
 
 from configs.experiment_config import ExperimentConfig
@@ -19,6 +20,7 @@ from src.evaluation.student_eval import (
 )
 from src.utils.data_loading import QMatrixData
 from src.utils.plotting import plot_pca_variance, plot_pca_by_label
+from src.utils.generate_teacher_data import save_teacher_data
 
 # ---------------------------------------------------------------------------
 # Checkpoint / output directory helpers
@@ -67,9 +69,18 @@ def _load_student(config, device, filename):
 # Stage 1: generate_teacher
 # ---------------------------------------------------------------------------
 
-def stage_generate_teacher(config, device):
+def stage_generate_data(config):
+    print("--- Stage 0: Generate Teacher Data PKLs ---")
+    save_teacher_data(PROJECT_ROOT, config)
+
+
+def stage_generate_teacher(config, device, regen=False):
     print("--- Stage 1: Teacher Q-Matrix Generation ---")
     ckpt = _ckpt_dir()
+
+    if regen:
+        config.qmat_gen = True
+        print("  --regen set: Q-matrices will be regenerated from scratch")
 
     config.qmat_read_code = 'training_4x4'
     q_matrices, label_dict, wall_state_dict, sopt_dict = generate_q_matrices(config, device)
@@ -644,9 +655,13 @@ def main():
     parser = argparse.ArgumentParser(description="Language Emergence Execution Pipeline")
     parser.add_argument(
         '--stage', type=str, required=True,
-        choices=['all', 'generate_teacher', 'train_language', 'train_student',
-                 'feedback', 'telephone_game', 'figure3', 'figure4'],
+        choices=['all', 'generate_data', 'generate_teacher', 'train_language',
+                 'train_student', 'feedback', 'telephone_game', 'figure3', 'figure4'],
         help='Which stage of the pipeline to run'
+    )
+    parser.add_argument(
+        '--regen', action='store_true',
+        help='Regenerate Q-matrices from scratch instead of loading existing PKLs'
     )
     args   = parser.parse_args()
     config = ExperimentConfig()
@@ -654,7 +669,8 @@ def main():
     print(f"Using device: {device}")
 
     stage_fns = {
-        'generate_teacher': lambda: stage_generate_teacher(config, device),
+        'generate_data':    lambda: stage_generate_data(config),
+        'generate_teacher': lambda: stage_generate_teacher(config, device, regen=args.regen),
         'train_language':   lambda: stage_train_language(config, device),
         'train_student':    lambda: stage_train_student(config, device),
         'feedback':         lambda: stage_feedback(config, device),
@@ -664,7 +680,7 @@ def main():
     }
 
     if args.stage == 'all':
-        for name, fn in stage_fns.items():
+        for fn in stage_fns.values():
             print(f"\n{'='*60}")
             fn()
     else:
