@@ -22,7 +22,7 @@ python main.py --stage <stage>
 ### Stages (run in order)
 
 | Stage | What it does |
-|---|---|
+| --- | --- |
 | `generate_data` | Generate teacher task definitions (wall configs + label dicts) |
 | `generate_teacher` | Load/generate teacher Q-matrices (`--regen` to regenerate from scratch) |
 | `train_language` | Train the sparse autoencoder (SAE) on teacher Q-matrices |
@@ -44,14 +44,14 @@ This generates all data from scratch and runs the full pipeline end-to-end. Inte
 ### Outputs
 
 | Location | Contents |
-|---|---|
+| --- | --- |
 | `outputs/checkpoints/` | Model weights and intermediate data (gitignored) |
 | `outputs/figures/` | All figures (`fig_telephone_game.png`, `fig3_*.png`, `fig4_*.png`) |
 | `outputs/tables/` | `table5_critical_f.txt`, `table6_bonferroni.txt` |
 
 ## Requirements
 
-```
+```text
 matplotlib==3.9.1
 networkx==3.3
 numpy==1.26.4
