@@ -88,61 +88,61 @@ class SquareGridworld():
                 for a in range(self.n_actions)}
 
 
-def state_int_to_tuple(state_int: Optional[int], config: ExperimentConfig, device: torch.device) -> Optional[torch.Tensor]:
-    '''
-    Converts a state integer to a (1, 2) coordinate tensor centered at (0, 0).
-    ---
-    INPUT
-    state_int - integer state representation
-    ---
-    OUTPUT
-    state - tensor of shape (1, 2) with (x, y) coordinates, or None
-    '''
-    if state_int is None:
-        return None
-    n = config.grid_dim
-    cval = (n - 1) / 2
-    sx = state_int % n - cval
-    sy = math.floor(state_int / n) - cval
-    return torch.tensor([[sx, sy]], device=device)
+    def state_int_to_tuple(state_int: Optional[int], config: ExperimentConfig, device: torch.device) -> Optional[torch.Tensor]:
+        '''
+        Converts a state integer to a (1, 2) coordinate tensor centered at (0, 0).
+        ---
+        INPUT
+        state_int - integer state representation
+        ---
+        OUTPUT
+        state - tensor of shape (1, 2) with (x, y) coordinates, or None
+        '''
+        if state_int is None:
+            return None
+        n = config.grid_dim
+        cval = (n - 1) / 2
+        sx = state_int % n - cval
+        sy = math.floor(state_int / n) - cval
+        return torch.tensor([[sx, sy]], device=device)
 
 
-def state_tuple_to_int(state: Optional[torch.Tensor], config: ExperimentConfig) -> Optional[int]:
-    '''
-    Converts a (1, 2) coordinate tensor back to a state integer.
-    ---
-    INPUT
-    state - tensor of shape (1, 2) with (x, y) coordinates
-    ---
-    OUTPUT
-    state_int - integer state representation, or None
-    '''
-    if state is None:
-        return None
-    n = config.grid_dim
-    cval = (n - 1) / 2
-    sx, sy = state[0]
-    return int((sx + cval).item() + n * (sy + cval).item())
+    def state_tuple_to_int(state: Optional[torch.Tensor], config: ExperimentConfig) -> Optional[int]:
+        '''
+        Converts a (1, 2) coordinate tensor back to a state integer.
+        ---
+        INPUT
+        state - tensor of shape (1, 2) with (x, y) coordinates
+        ---
+        OUTPUT
+        state_int - integer state representation, or None
+        '''
+        if state is None:
+            return None
+        n = config.grid_dim
+        cval = (n - 1) / 2
+        sx, sy = state[0]
+        return int((sx + cval).item() + n * (sy + cval).item())
 
 
-def get_state_tensors(m_len: int, config: ExperimentConfig, device: torch.device) -> torch.Tensor:
-    '''
-    Builds a (grid_dim, grid_dim * m_len, 2) tensor of state coordinates,
-    tiled m_len times per state — used to batch student network forward passes
-    over all states at once.
-    ---
-    INPUT
-    m_len - number of messages in the current batch
-    ---
-    OUTPUT
-    state_tensors - tensor of shape (grid_dim, grid_dim * m_len, 2)
-    '''
-    n = config.grid_dim
-    state_tensors = torch.zeros(size=(n, n * m_len, 2))
-    for j in range(n):
-        for i in range(n):
-            s = i * n + j
-            s_tup = state_int_to_tuple(s, config, device)[0]
-            for b in range(m_len):
-                state_tensors[j, i * m_len + b] = s_tup
-    return state_tensors
+    def get_state_tensors(m_len: int, config: ExperimentConfig, device: torch.device) -> torch.Tensor:
+        '''
+        Builds a (grid_dim, grid_dim * m_len, 2) tensor of state coordinates,
+        tiled m_len times per state — used to batch student network forward passes
+        over all states at once.
+        ---
+        INPUT
+        m_len - number of messages in the current batch
+        ---
+        OUTPUT
+        state_tensors - tensor of shape (grid_dim, grid_dim * m_len, 2)
+        '''
+        n = config.grid_dim
+        state_tensors = torch.zeros(size=(n, n * m_len, 2))
+        for j in range(n):
+            for i in range(n):
+                s = i * n + j
+                s_tup = state_int_to_tuple(s, config, device)[0]
+                for b in range(m_len):
+                    state_tensors[j, i * m_len + b] = s_tup
+        return state_tensors

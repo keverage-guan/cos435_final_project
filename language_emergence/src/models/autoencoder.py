@@ -139,7 +139,11 @@ def testSAE(autoencoder, test_data, batch_size, gamma_sparse, device, reshape=Fa
                 wall_label = labels[0][i].item()
                 init_state = labels[1][i].item()
                 goal_state = labels[2][i].item()
-                message_dict[(wall_label, init_state, goal_state)] = messages[i].detach()
+                if reshape:
+                    demand = labels[3][i].item()
+                    message_dict[(wall_label, init_state, goal_state, demand)] = messages[i].detach()
+                else:
+                    message_dict[(wall_label, init_state, goal_state)] = messages[i].detach()
 
     return torch.tensor(total_losses), torch.tensor(recon_losses), torch.tensor(sparsity_losses), all_messages, message_dict
 
