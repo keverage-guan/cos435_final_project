@@ -265,7 +265,7 @@ def train_student_with_feedback_inventory(label_dict, wall_state_dict, sopt_dict
     for task, (wall_index, init_state, goal_state, demand) in tqdm(label_dict.items(), desc="Precomputing tasks"):
         wall_states = wall_state_dict[wall_index]
 
-        env = InventoryManagement(init_state, goal_state, wall_states, config, demand)
+        env = InventoryManagement(init_state, goal_state, wall_states, demand, config)
         outcomes = env.get_outcomes()
         
         next_states_dict = {}
@@ -412,7 +412,7 @@ def run_evaluations_inventory(student, label_dict, wall_state_dict, message_dict
         for task, (wall_index, init_state, goal_state, demand) in label_dict.items():
             wall_states = wall_state_dict[wall_index]
             
-            env = InventoryManagement(init_state, goal_state, wall_states, config, demand)
+            env = InventoryManagement(init_state, goal_state, wall_states, demand, config)
             outcomes = env.get_outcomes()
             next_states_dict = {s: [outcomes[(s,a)][0] if outcomes[(s,a)][0] is not None else goal_state 
                                     for a in range(config.n_actions)] 
