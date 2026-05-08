@@ -92,61 +92,61 @@ class InventoryManagement():
                 for a in range(self.n_actions)}
 
 
-def state_int_to_tuple(state_int: Optional[int], config: ExperimentConfig, device: torch.device) -> Optional[torch.Tensor]:
-    '''
-    Converts an inventory level integer to a (1, 1) scalar tensor, centred at 0.
+    def state_int_to_tuple(state_int: Optional[int], config: ExperimentConfig, device: torch.device) -> Optional[torch.Tensor]:
+        '''
+        Converts an inventory level integer to a (1, 1) scalar tensor, centred at 0.
 
-    The 1D analogue of the gridworld's (1, 2) centred coordinate tensor.
-    ---
-    INPUT
-    state_int - integer inventory level (0..n_states-1)
-    ---
-    OUTPUT
-    state - tensor of shape (1, 1) with centred inventory level, or None
-    '''
-    if state_int is None:
-        return None
-    n_states = config.grid_dim ** 2
-    cval = (n_states - 1) / 2
-    return torch.tensor([[state_int - cval]], dtype=torch.float32, device=device)
-
-
-def state_tuple_to_int(state: Optional[torch.Tensor], config: ExperimentConfig) -> Optional[int]:
-    '''
-    Converts a (1, 1) centred scalar tensor back to an inventory level integer.
-    ---
-    INPUT
-    state - tensor of shape (1, 1) with centred inventory level
-    ---
-    OUTPUT
-    state_int - integer inventory level, or None
-    '''
-    if state is None:
-        return None
-    n_states = config.grid_dim ** 2
-    cval = (n_states - 1) / 2
-    return int((state[0, 0] + cval).round().item())
+        The 1D analogue of the gridworld's (1, 2) centred coordinate tensor.
+        ---
+        INPUT
+        state_int - integer inventory level (0..n_states-1)
+        ---
+        OUTPUT
+        state - tensor of shape (1, 1) with centred inventory level, or None
+        '''
+        if state_int is None:
+            return None
+        n_states = config.grid_dim ** 2
+        cval = (n_states - 1) / 2
+        return torch.tensor([[state_int - cval]], dtype=torch.float32, device=device)
 
 
-def get_state_tensors(m_len: int, config: ExperimentConfig, device: torch.device) -> torch.Tensor:
-    '''
-    Builds a (n_states, m_len, 1) tensor of centred inventory level scalars,
-    tiled m_len times per state — used to batch student network forward passes
-    over all states at once.
+    def state_tuple_to_int(state: Optional[torch.Tensor], config: ExperimentConfig) -> Optional[int]:
+        '''
+        Converts a (1, 1) centred scalar tensor back to an inventory level integer.
+        ---
+        INPUT
+        state - tensor of shape (1, 1) with centred inventory level
+        ---
+        OUTPUT
+        state_int - integer inventory level, or None
+        '''
+        if state is None:
+            return None
+        n_states = config.grid_dim ** 2
+        cval = (n_states - 1) / 2
+        return int((state[0, 0] + cval).round().item())
 
-    Shape convention mirrors the gridworld's (grid_dim, grid_dim*m_len, 2):
-    the product of the first two dims equals n_states * m_len in both cases.
-    ---
-    INPUT
-    m_len - number of messages in the current batch
-    ---
-    OUTPUT
-    state_tensors - tensor of shape (n_states, m_len, 1)
-    '''
-    n_states = config.grid_dim ** 2
-    state_tensors = torch.zeros(size=(n_states, m_len, 1), dtype=torch.float32, device=device)
-    for s in range(n_states):
-        s_scalar = state_int_to_tuple(s, config, device)[0]  # shape (1,)
-        for b in range(m_len):
-            state_tensors[s, b] = s_scalar
-    return state_tensors
+
+    def get_state_tensors(m_len: int, config: ExperimentConfig, device: torch.device) -> torch.Tensor:
+        '''
+        Builds a (n_states, m_len, 1) tensor of centred inventory level scalars,
+        tiled m_len times per state — used to batch student network forward passes
+        over all states at once.
+
+        Shape convention mirrors the gridworld's (grid_dim, grid_dim*m_len, 2):
+        the product of the first two dims equals n_states * m_len in both cases.
+        ---
+        INPUT
+        m_len - number of messages in the current batch
+        ---
+        OUTPUT
+        state_tensors - tensor of shape (n_states, m_len, 1)
+        '''
+        n_states = config.grid_dim ** 2
+        state_tensors = torch.zeros(size=(n_states, m_len, 1), dtype=torch.float32, device=device)
+        for s in range(n_states):
+            s_scalar = state_int_to_tuple(s, config, device)[0]  # shape (1,)
+            for b in range(m_len):
+                state_tensors[s, b] = s_scalar
+        return state_tensors
