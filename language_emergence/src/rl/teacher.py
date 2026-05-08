@@ -295,7 +295,8 @@ def make_inventory_env(task_params, wall_state_dict, config):
     order_mode_id = task_params[3] 
     
     order_quantities = ID_TO_ORDER_QUANTITIES[order_mode_id]
-    return InventoryManagement(init_state, goal_state, order_quantities, config)
+    return InventoryManagement(init_state, goal_state, order_quantities, config,
+                               holding_cost=0.5, stockout_penalty=2.0)
 
 def compute_perfect_qdict_inventory(label_dict, wall_state_dict, config, device):
     '''
@@ -324,6 +325,6 @@ def compute_perfect_qdict_inventory(label_dict, wall_state_dict, config, device)
         perfect_qdict[task] = dynamics_cache[cache_key]
         
         # Optimal steps: simple absolute distance for inventory
-        sopt_dict[task] = abs(int(goal_state) - int(init_state))
+        sopt_dict[task] = 50
         
     return perfect_qdict, sopt_dict

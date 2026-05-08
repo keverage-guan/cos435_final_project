@@ -109,6 +109,14 @@ def train_student(
                 
         message = message_dict[msg_key]
 
+        r_sa = None
+        if goal_state < 0:
+            r_sa = torch.tensor(
+                [[env.get_expected_reward(s, a) for a in range(config.n_actions)]
+                 for s in range(n_states)],
+                dtype=torch.float32, device=device,
+            )
+
         tasks_data.append({
             'init_state': init_state,
             'goal_state': goal_state,
@@ -116,6 +124,7 @@ def train_student(
             'message': message,
             'all_states': all_states,
             'probas_transformer': T,
+            'r_sa': r_sa,
         })
 
     print(f"Training student on {len(tasks_data)} tasks...")
@@ -125,15 +134,14 @@ def train_student(
         optimizer.zero_grad(set_to_none=True)
 
         for d in tasks_data:
-            # --- ADAPTER BLOCK: Handle 1D vs 2D States ---
+            # handle 1d vs 2d states
             states = d['all_states']
             if states.shape[1] == 1:
                 grid_dim = config.grid_dim
-                indices = states.view(-1).long()
+                indices = (states.view(-1) + (n_states - 1) / 2.0).round().long()
                 x = (indices % grid_dim).float() / (grid_dim - 1)
                 y = (indices // grid_dim).float() / (grid_dim - 1)
                 states = torch.stack([x, y], dim=1)
-            # ---------------------------------------------
 
             msg_rep = d['message'].unsqueeze(0).expand(states.shape[0], -1)
             Q = student(torch.cat([states, msg_rep], dim=1))
@@ -148,14 +156,29 @@ def train_student(
                 .view(n_states, n_states).t()
             )
             
-            goal_proba = torch.linalg.matrix_power(
-                matrix_big, d['opt_steps']
-            )[d['goal_state'], d['init_state']]
-
-            loss = (
-                (1 - kappa) * (1 - goal_proba) ** 4
-                + (kappa / mt.sqrt(n_states * config.n_actions)) * torch.norm(Q, 2)
-            )
+            if d['goal_state'] >= 0:
+                # gridworld: maximise probability of reaching the goal
+                goal_proba = torch.linalg.matrix_power(
+                    matrix_big, d['opt_steps']
+                )[d['goal_state'], d['init_state']]
+                loss = (
+                    (1 - kappa) * (1 - goal_proba) ** 4
+                    + (kappa / mt.sqrt(n_states * config.n_actions)) * torch.norm(Q, 2)
+                )
+            else:
+                # inventory: maximise expected cumulative reward (no goal state)
+                policy = F.softmax(Q, dim=1)
+                exp_r = (policy * d['r_sa']).sum(dim=1)
+                state_dist = torch.zeros(n_states, device=device)
+                state_dist[d['init_state']] = 1.0
+                total_r = torch.zeros(1, device=device)
+                for _ in range(d['opt_steps']):
+                    total_r = total_r + torch.dot(state_dist, exp_r)
+                    state_dist = matrix_big @ state_dist
+                loss = (
+                    -(total_r / d['opt_steps'])
+                    + (kappa / mt.sqrt(n_states * config.n_actions)) * torch.norm(Q, 2)
+                )
             loss.backward()
 
         optimizer.step()
@@ -221,6 +244,14 @@ def train_student_with_feedback(
         # Use the direct dictionary key to fetch Q-matrix
         original_q = q_matrix_dict[task_key].unsqueeze(0).to(device)
 
+        r_sa = None
+        if goal_state < 0:
+            r_sa = torch.tensor(
+                [[env.get_expected_reward(s, a) for a in range(config.n_actions)]
+                 for s in range(n_states)],
+                dtype=torch.float32, device=device,
+            )
+
         tasks_data.append({
             'init_state': init_state,
             'goal_state': goal_state,
@@ -228,6 +259,7 @@ def train_student_with_feedback(
             'original_q': original_q,
             'all_states': all_states,
             'probas_transformer': T,
+            'r_sa': r_sa,
         })
 
     print(f"Joint training on {len(tasks_data)} tasks...")
@@ -240,15 +272,14 @@ def train_student_with_feedback(
             message, q_recon = autoencoder(d['original_q'])
             flat_msg = message.view(1, -1) 
 
-            # --- ADAPTER BLOCK: Handle 1D vs 2D States ---
+            # handle 1d vs 2d states
             states = d['all_states']
             if states.shape[1] == 1:
                 grid_dim = config.grid_dim
-                indices = states.view(-1).long()
+                indices = (states.view(-1) + (n_states - 1) / 2.0).round().long()
                 x = (indices % grid_dim).float() / (grid_dim - 1)
                 y = (indices // grid_dim).float() / (grid_dim - 1)
                 states = torch.stack([x, y], dim=1)
-            # ---------------------------------------------
 
             msg_rep = flat_msg.expand(n_states, -1)
             Q = student(torch.cat([states, msg_rep], dim=1))
@@ -262,14 +293,27 @@ def train_student_with_feedback(
                 .view(n_states, n_states).t()
             )
             
-            goal_proba = torch.linalg.matrix_power(
-                matrix_big, d['opt_steps']
-            )[d['goal_state'], d['init_state']]
-
-            student_loss = (
-                (1 - kappa) * (1 - goal_proba) ** 4
-                + (kappa / mt.sqrt(n_states * config.n_actions)) * torch.norm(Q, 2)
-            )
+            if d['goal_state'] >= 0:
+                goal_proba = torch.linalg.matrix_power(
+                    matrix_big, d['opt_steps']
+                )[d['goal_state'], d['init_state']]
+                student_loss = (
+                    (1 - kappa) * (1 - goal_proba) ** 4
+                    + (kappa / mt.sqrt(n_states * config.n_actions)) * torch.norm(Q, 2)
+                )
+            else:
+                policy = F.softmax(Q, dim=1)
+                exp_r = (policy * d['r_sa']).sum(dim=1)
+                state_dist = torch.zeros(n_states, device=device)
+                state_dist[d['init_state']] = 1.0
+                total_r = torch.zeros(1, device=device)
+                for _ in range(d['opt_steps']):
+                    total_r = total_r + torch.dot(state_dist, exp_r)
+                    state_dist = matrix_big @ state_dist
+                student_loss = (
+                    -(total_r / d['opt_steps'])
+                    + (kappa / mt.sqrt(n_states * config.n_actions)) * torch.norm(Q, 2)
+                )
             
             recon_loss = torch.norm(d['original_q'] - q_recon, 2)
             sparse_loss = torch.norm(message, 1)
@@ -549,7 +593,7 @@ def run_episode(student, message, init_state, outcomes, max_steps, config, devic
             # Coordinate adapter
             if state_vec.shape[0] == 1:
                 grid_dim = config.grid_dim
-                idx = state_vec.long().item()
+                idx = (state_vec + (grid_dim ** 2 - 1) / 2.0).round().long().item()
                 state_vec = torch.tensor([idx % grid_dim, idx // grid_dim], 
                                         device=device).float() / (grid_dim - 1)
 
