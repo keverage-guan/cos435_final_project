@@ -8,11 +8,12 @@ class ExperimentConfig:
         self.language_code_closingloop = "nonlinear_goallocs0_zeta5_language0"
         self.qmat_read_code = "training_4x4"
         
-        # environment (gridworld) parameters
+        # environment (gridworld and inventory) parameters
         self.grid_dim = 4
         self.n_actions = 4
         self.student_init = 0
         self.lava = False
+        self.demand = 3
         
         self.step_reward = -0.1
         self.goal_reward = 2.0

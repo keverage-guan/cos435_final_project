@@ -12,19 +12,21 @@ import torch
 import torch.nn as nn
 
 from configs.experiment_config import ExperimentConfig
-from src.env.gridworld import SquareGridworld, state_int_to_tuple
+from src.env.gridworld import SquareGridworld
+from src.env.inventory import InventoryManagement
 from src.models.dqn import DQN
 from src.rl.memory import ReplayMemory, Transition
 from src.rl.policies import select_action_optimism
 from src.utils.graph_utils import graph_from_walls
 
 
-def transition_memories(init_state: int, goal_state: int, wall_states: 'list[int]',
+def transition_memories(env, init_state: int, goal_state: int, wall_states: 'list[int]',
                         config: ExperimentConfig, device: torch.device) -> 'tuple[dict, list]':
     '''
     Precompute a compact memory of all transitions in a gridworld for efficient DQN training.
     ---
     INPUT
+    env         - environment (either GridWorld or Inventory Management)
     init_state, goal_state, wall_states - task specification
     config  - experiment configuration
     device  - compute device
@@ -33,7 +35,7 @@ def transition_memories(init_state: int, goal_state: int, wall_states: 'list[int
     transition_index_dict - maps (state, action) to its index in the transition batch
     batches_list          - [concatenated states+nextstates tensor, rewards tensor]
     '''
-    env = SquareGridworld(init_state, goal_state, wall_states, config)
+
     outcomes = env.get_outcomes()
 
     transition_memory = ReplayMemory(capacity=config.n_actions * config.grid_dim ** 2)
@@ -42,15 +44,15 @@ def transition_memories(init_state: int, goal_state: int, wall_states: 'list[int
     for s_int in range(config.grid_dim ** 2):
         if s_int in wall_states or s_int == goal_state:
             continue
-        s = state_int_to_tuple(s_int, config, device)
+        s = env.state_int_to_tuple(s_int, config, device)
         for a in range(config.n_actions):
             transition_index_dict[(s_int, a)] = i
             i += 1
             ns_int, r = outcomes[(s_int, a)]
-            ns = state_int_to_tuple(ns_int, config, device)
+            ns = env.state_int_to_tuple(ns_int, config, device)
             transition_memory.push(s, torch.tensor([[a]], device=device), ns, torch.tensor([[r]], device=device))
     # add goal state transitions at the end
-    gs = state_int_to_tuple(goal_state, config, device)
+    gs = env.state_int_to_tuple(goal_state, config, device)
     for a in range(config.n_actions):
         transition_memory.push(gs, torch.tensor([[a]], device=device), gs, torch.tensor([[config.goal_reward]], device=device))
         transition_index_dict[(goal_state, a)] = i
@@ -66,9 +68,9 @@ def transition_memories(init_state: int, goal_state: int, wall_states: 'list[int
     for s_int in range(config.grid_dim ** 2):
         if s_int in wall_states or s_int == goal_state:
             continue
-        s = state_int_to_tuple(s_int, config, device)
+        s = env.state_int_to_tuple(s_int, config, device)
         transition_memory2.push(s, torch.tensor([[0]], device=device), s, torch.tensor([[0.]], device=device))
-    gs = state_int_to_tuple(goal_state, config, device)
+    gs = env.state_int_to_tuple(goal_state, config, device)
     transition_memory2.push(gs, torch.tensor([[0]], device=device), gs, torch.tensor([[0.]], device=device))
 
     transitions2 = transition_memory2.memory
@@ -134,7 +136,7 @@ def optimize_dqn(network: DQN, optimizer: torch.optim.Optimizer, memory: torch.T
 
 
 def q_matrix_from_network(network: nn.Module, message: torch.Tensor, wall_states: 'list[int]',
-                          config: ExperimentConfig, device: torch.device) -> torch.Tensor:
+                          config: ExperimentConfig, device: torch.device, env) -> torch.Tensor:
     '''
     Extract the full Q-matrix from a trained network by forward-passing every state.
     ---
@@ -144,6 +146,7 @@ def q_matrix_from_network(network: nn.Module, message: torch.Tensor, wall_states
     wall_states - wall states of the gridworld
     config      - experiment configuration
     device      - compute device
+    env         - environment (either GridWorld or Inventory Management)
     ---
     OUTPUT
     q_matrix - tensor of shape (n_actions, grid_dim, grid_dim)
@@ -152,11 +155,12 @@ def q_matrix_from_network(network: nn.Module, message: torch.Tensor, wall_states
     for s in range(config.grid_dim ** 2):
         indx, indy = s // config.grid_dim, s % config.grid_dim
         if (not (s in wall_states)) or config.lava:
-            q_matrix[:, indx, indy] = network(torch.cat((state_int_to_tuple(s, config, device)[0], message), 0))
+            q_matrix[:, indx, indy] = network(torch.cat((env.state_int_to_tuple(s, config, device)[0], message), 0))
         else:
             q_matrix[:, indx, indy] = torch.zeros(config.n_actions, device=device)
     return q_matrix
 
+############################# GRIDWORLD VERSIONS #################################
 
 def q_matrix_generator_deterministic(label_dict: 'dict[int, list]',
                                      wall_state_dict: 'dict[int, list[int]]',
@@ -222,7 +226,6 @@ def q_matrix_generator_deterministic(label_dict: 'dict[int, list]',
     print("Completed calculation of deterministic Q-matrices")
     return qdict, sopt_dict
 
-
 def q_matrix_generator(label_dict: 'dict[int, list]',
                        wall_state_dict: 'dict[int, list[int]]',
                        perfect_qdict: 'dict[int, torch.Tensor]',
@@ -264,7 +267,7 @@ def q_matrix_generator(label_dict: 'dict[int, list]',
         env = SquareGridworld(init_state, goal_state, wall_states, config)
         outcomes = env.get_outcomes()
 
-        transition_index_dict, batches_list = transition_memories(init_state, goal_state, wall_states, config, device)
+        transition_index_dict, batches_list = transition_memories(env, init_state, goal_state, wall_states, config, device)
 
         good_qmatrix = False
         counter = 0
@@ -286,7 +289,7 @@ def q_matrix_generator(label_dict: 'dict[int, list]',
                     if s not in wall_states and s != goal_state
                 ])
                 for t in range(max_steps):
-                    action = select_action_optimism(teacher, state_int, message, alpha, sa_counts, config, device)
+                    action = select_action_optimism(teacher, state_int, message, alpha, sa_counts, config, device, env)
                     next_state_int, reward = outcomes[(state_int, action)]
 
                     reward = torch.tensor([[reward]], device=device)
@@ -310,7 +313,7 @@ def q_matrix_generator(label_dict: 'dict[int, list]',
                     memory = torch.tensor(list(memory_short) + list(memory_long), device=device)
                     optimize_dqn(teacher, optimizer, memory, batches_list, goalfound, loss_norm, config)
 
-            q_matrix = q_matrix_from_network(teacher, message, wall_states, config, device)
+            q_matrix = q_matrix_from_network(teacher, message, wall_states, config, device, env)
             difference_to_perfect = torch.linalg.vector_norm(q_matrix - perfect_qdict[task], ord=1)
             print(f"difference to perfect Q-matrix: {difference_to_perfect}")
 
@@ -376,6 +379,158 @@ def generate_q_matrices(config: ExperimentConfig,
 
     # os.makedirs("../data/teacher/q matrix dictionaries", exist_ok=True)
     # save_path = f"../data/teacher/q matrix dictionaries/q_matrices{config.qmat_read_code}.pkl"
+    with open(save_path, 'wb') as f:
+        pickle.dump(q_matrices, f)
+
+    return q_matrices, label_dict, wall_state_dict, sopt_dict
+
+############################# INVENTORY MANAGEMENT VERSIONS ##################################
+
+def value_iteration(env, config, device, gamma=0.99, tol=1e-6):
+    outcomes = env.get_outcomes()
+    n_states = config.grid_dim ** 2
+    V = torch.zeros(n_states)
+    
+    while True:
+        V_new = torch.zeros(n_states)
+        for s in range(n_states):
+            if s == env.goal_state:
+                V_new[s] = config.goal_reward
+                continue
+            q_vals = []
+            for a in range(config.n_actions):
+                ns, r = outcomes[(s, a)]
+                if ns is None:
+                    ns = env.goal_state
+                q_vals.append(r + gamma * V[ns])
+            V_new[s] = max(q_vals)
+        
+        if torch.max(torch.abs(V_new - V)) < tol:
+            break
+        V = V_new
+    
+    # derive Q-matrix from V
+    q_matrix = torch.zeros(config.n_actions, config.grid_dim, config.grid_dim)
+    for s in range(n_states):
+        indx, indy = s // config.grid_dim, s % config.grid_dim
+        if s == env.goal_state:
+            q_matrix[:, indx, indy] = config.goal_reward
+        elif s in env.wall_states:
+            q_matrix[:, indx, indy] = 0
+        else:
+            for a in range(config.n_actions):
+                ns, r = outcomes[(s, a)]
+                if ns is None:
+                    ns = env.goal_state
+                q_matrix[a, indx, indy] = r + gamma * V[ns]
+    
+    return q_matrix
+
+def value_iteration_all_tasks(label_dict, wall_state_dict, config, device):
+    perfect_qdict = {}
+    sopt_dict = {}
+    for task, (wall_index, init_state, goal_state, demand) in label_dict.items():
+        wall_states = wall_state_dict[wall_index]
+        env = InventoryManagement(init_state, goal_state, wall_states, config)
+        perfect_qdict[task] = value_iteration(env, config, device)
+        sopt_dict[task] = abs(goal_state - init_state)
+    return perfect_qdict, sopt_dict
+
+def q_matrix_generator_inventory(label_dict, wall_state_dict, perfect_qdict, config, device,
+                                  num_eps=200, loss_norm=None, max_steps=50, alpha=16.0):
+    if loss_norm is None:
+        loss_norm = nn.MSELoss()
+
+    qdict = {}
+    for task, (wall_index, init_state, goal_state, demand) in label_dict.items():
+        wall_states = wall_state_dict[wall_index]
+        print(f"task is {task}")
+
+        env = InventoryManagement(init_state, goal_state, wall_states, config)
+        outcomes = env.get_outcomes()
+
+        transition_index_dict, batches_list = transition_memories(env, init_state, goal_state, wall_states, config, device)
+
+        good_qmatrix = False
+        counter = 0
+        while counter < config.max_attempts and not good_qmatrix:
+            ep_steps = np.zeros(num_eps)
+            teacher = DQN(K=0, n_actions=config.n_actions, device=device)
+            message = torch.tensor([], device=device)
+            optimizer = torch.optim.Adam(teacher.parameters(), lr=config.lr_teacher, weight_decay=0)
+
+            memory_short = deque([], maxlen=config.L)
+            memory_long = deque([], maxlen=config.n_actions * config.grid_dim ** 2)
+            sa_counts = {(s, a): 0 for s in range(config.grid_dim ** 2) for a in range(config.n_actions)}
+            goalfound = False
+
+            for ep in range(num_eps):
+                state_int = random.choice([
+                    s for s in range(config.grid_dim ** 2)
+                    if s not in wall_states and s != goal_state
+                ])
+                for t in range(max_steps):
+                    action = select_action_optimism(teacher, state_int, message, alpha, sa_counts, config, device, env)
+                    next_state_int, reward = outcomes[(state_int, action)]
+
+                    reward = torch.tensor([[reward]], device=device)
+                    action = torch.tensor([[action]], device=device)
+
+                    if next_state_int is None:
+                        if not goalfound:
+                            goalfound = True
+                        ep_steps[ep] = t
+                        break
+                    else:
+                        memory_short.append(transition_index_dict[(state_int, action.item())])
+                        if sa_counts[(state_int, action.item())] == 0:
+                            memory_long.append(transition_index_dict[(state_int, action.item())])
+                        if t == max_steps - 1:
+                            ep_steps[ep] += max_steps
+                        sa_counts[(state_int, action.item())] += 1
+                        state_int = next_state_int
+
+                    memory = torch.tensor(list(memory_short) + list(memory_long), device=device)
+                    optimize_dqn(teacher, optimizer, memory, batches_list, goalfound, loss_norm, config)
+
+            q_matrix = q_matrix_from_network(teacher, message, wall_states, config, device, env)
+            difference_to_perfect = torch.linalg.vector_norm(q_matrix - perfect_qdict[task], ord=1)
+            print(f"difference to perfect Q-matrix: {difference_to_perfect}")
+
+            if difference_to_perfect < config.accuracy:
+                good_qmatrix = True
+                qdict[task] = q_matrix
+            elif counter == config.max_attempts - 1:
+                qdict[task] = perfect_qdict[task]
+                counter += 1
+            else:
+                counter += 1
+
+    return qdict
+
+def generate_q_matrices_inventory(config, device):
+    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+    label_path = os.path.join(BASE_DIR, f"data/inventory/label dictionaries/q_matrices_labels{config.qmat_read_code}.pkl")
+    wall_path = os.path.join(BASE_DIR, f"data/inventory/wall state dictionaries/wall_states{config.qmat_read_code}.pkl")
+
+    with open(label_path, 'rb') as f:
+        label_dict = pickle.load(f)
+    with open(wall_path, 'rb') as f:
+        wall_state_dict = pickle.load(f)
+
+    if not config.qmat_gen:
+        qmat_path = os.path.join(BASE_DIR, f"data/inventory/q matrix dictionaries/q_matrices{config.qmat_read_code}.pkl")
+        with open(qmat_path, 'rb') as f:
+            q_matrices = pickle.load(f)
+        perfect_qdict, sopt_dict = value_iteration(label_dict, wall_state_dict, config, device)
+        return q_matrices, label_dict, wall_state_dict, sopt_dict
+
+    perfect_qdict, sopt_dict = value_iteration_all_tasks(label_dict, wall_state_dict, config, device)
+    q_matrices = q_matrix_generator_inventory(label_dict, wall_state_dict, perfect_qdict, config, device)
+
+    os.makedirs(os.path.join(BASE_DIR, "data/inventory/q matrix dictionaries"), exist_ok=True)
+    save_path = os.path.join(BASE_DIR, f"data/inventory/q matrix dictionaries/q_matrices{config.qmat_read_code}.pkl")
     with open(save_path, 'wb') as f:
         pickle.dump(q_matrices, f)
 
