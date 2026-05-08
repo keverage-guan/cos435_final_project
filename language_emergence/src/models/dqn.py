@@ -10,7 +10,7 @@ class DQN(nn.Module):
     Deep Q Network class
     '''
 
-    def __init__(self, K: int, n_actions: int, device: torch.device, zero_init: bool = False):
+    def __init__(self, K: int, n_actions: int, device: torch.device, zero_init: bool = False, input_dim : int = 2):
         '''
         INPUT
         K: length of input message (zero for the teacher)
@@ -19,7 +19,7 @@ class DQN(nn.Module):
         zero_init: initialize all weights to zero?
         '''
         super(DQN, self).__init__()
-        self.lin1 = nn.Linear(2 + K, 10, device=device) # input size is 2(gridworld coordinates) + length of message
+        self.lin1 = nn.Linear(input_dim + K, 10, device=device) # input size is 2(gridworld coordinates) + length of message
         self.lin2 = nn.Linear(10, 20, device=device)
         self.lin3 = nn.Linear(20, 20, device=device)
         self.lin4 = nn.Linear(20, n_actions, device=device)

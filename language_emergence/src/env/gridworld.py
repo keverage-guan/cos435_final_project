@@ -88,7 +88,7 @@ class SquareGridworld():
                 for a in range(self.n_actions)}
 
 
-    def state_int_to_tuple(state_int: Optional[int], config: ExperimentConfig, device: torch.device) -> Optional[torch.Tensor]:
+    def state_int_to_tuple(self, state_int: Optional[int], config: ExperimentConfig, device: torch.device) -> Optional[torch.Tensor]:
         '''
         Converts a state integer to a (1, 2) coordinate tensor centered at (0, 0).
         ---
@@ -107,7 +107,7 @@ class SquareGridworld():
         return torch.tensor([[sx, sy]], device=device)
 
 
-    def state_tuple_to_int(state: Optional[torch.Tensor], config: ExperimentConfig) -> Optional[int]:
+    def state_tuple_to_int(self, state: Optional[torch.Tensor], config: ExperimentConfig) -> Optional[int]:
         '''
         Converts a (1, 2) coordinate tensor back to a state integer.
         ---
@@ -125,7 +125,7 @@ class SquareGridworld():
         return int((sx + cval).item() + n * (sy + cval).item())
 
 
-    def get_state_tensors(m_len: int, config: ExperimentConfig, device: torch.device) -> torch.Tensor:
+    def get_state_tensors(self, m_len: int, config: ExperimentConfig, device: torch.device) -> torch.Tensor:
         '''
         Builds a (grid_dim, grid_dim * m_len, 2) tensor of state coordinates,
         tiled m_len times per state — used to batch student network forward passes

@@ -92,7 +92,7 @@ class InventoryManagement():
                 for a in range(self.n_actions)}
 
 
-    def state_int_to_tuple(state_int: Optional[int], config: ExperimentConfig, device: torch.device) -> Optional[torch.Tensor]:
+    def state_int_to_tuple(self, state_int: Optional[int], config: ExperimentConfig, device: torch.device) -> Optional[torch.Tensor]:
         '''
         Converts an inventory level integer to a (1, 1) scalar tensor, centred at 0.
 
@@ -111,7 +111,7 @@ class InventoryManagement():
         return torch.tensor([[state_int - cval]], dtype=torch.float32, device=device)
 
 
-    def state_tuple_to_int(state: Optional[torch.Tensor], config: ExperimentConfig) -> Optional[int]:
+    def state_tuple_to_int(self, state: Optional[torch.Tensor], config: ExperimentConfig) -> Optional[int]:
         '''
         Converts a (1, 1) centred scalar tensor back to an inventory level integer.
         ---
@@ -128,7 +128,7 @@ class InventoryManagement():
         return int((state[0, 0] + cval).round().item())
 
 
-    def get_state_tensors(m_len: int, config: ExperimentConfig, device: torch.device) -> torch.Tensor:
+    def get_state_tensors(self, m_len: int, config: ExperimentConfig, device: torch.device) -> torch.Tensor:
         '''
         Builds a (n_states, m_len, 1) tensor of centred inventory level scalars,
         tiled m_len times per state — used to batch student network forward passes

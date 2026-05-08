@@ -6,7 +6,7 @@ import networkx as nx
 import torch
 import torch.nn as nn
 
-from src.env.gridworld import SquareGridworld, state_int_to_tuple
+from src.env.gridworld import SquareGridworld
 from src.env.inventory import InventoryManagement
 from src.models.dqn import DQN
 from src.utils.graph_utils import graph_from_walls
