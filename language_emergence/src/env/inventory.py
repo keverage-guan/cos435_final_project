@@ -25,7 +25,7 @@ class InventoryManagement():
     NOTE: requires config.demand (int) — a new field not present in the gridworld config.
     """
 
-    def __init__(self, init_state: int, goal_state: int, wall_states: 'list[int]', config: ExperimentConfig):
+    def __init__(self, init_state: int, goal_state: int, wall_states: 'list[int]', demand, config: ExperimentConfig):
         self.init_state: int = init_state
         self.goal_state: int = goal_state
         self.wall_states: 'list[int]' = wall_states
@@ -35,7 +35,7 @@ class InventoryManagement():
         self.step_reward: float = config.step_reward
         self.goal_reward: float = config.goal_reward
         self.wall_reward: float = config.wall_reward
-        self.demand: int = config.demand             # fixed units demanded per period
+        self.demand: int = demand             # fixed units demanded per period
         # action a orders a * order_step units; step sized so max order reaches ~full capacity
         self.order_step: int = max(1, self.n_states // self.n_actions)
 

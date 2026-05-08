@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 from src.env.gridworld import SquareGridworld, state_int_to_tuple
+from src.env.inventory import InventoryManagement
 from src.models.dqn import DQN
 from src.utils.graph_utils import graph_from_walls
 from src.rl.teacher import q_matrix_from_network
@@ -247,6 +248,99 @@ def train_student_with_feedback(label_dict, wall_state_dict, sopt_dict, q_matrix
             optimizer.zero_grad(set_to_none=True)
 
     return autoencoder, student
+
+def train_student_with_feedback_inventory(label_dict, wall_state_dict, sopt_dict, q_matrix_dict, autoencoder, student, config, device, num_eps=750, max_steps=50):
+
+    optimizer = torch.optim.Adam(list(autoencoder.parameters()) + list(student.parameters()), lr=config.lr_teacher)
+    
+    kappa = getattr(config, 'kappa', 0.05)
+    gamma_sparse = getattr(config, 'gamma_sparse', 0.1)
+    zeta_std = getattr(config, 'zeta_std', 5.0) 
+
+    autoencoder.train()
+    student.train()
+
+    tasks_data = []
+    
+    for task, (wall_index, init_state, goal_state, demand) in tqdm(label_dict.items(), desc="Precomputing tasks"):
+        wall_states = wall_state_dict[wall_index]
+
+        env = InventoryManagement(init_state, goal_state, wall_states, config, demand)
+        outcomes = env.get_outcomes()
+        
+        next_states_dict = {}
+        for s in range(config.grid_dim**2):
+            next_states = []
+            for a in range(config.n_actions):
+                ns, _ = outcomes[(s, a)]
+                if ns is None:
+                    ns = goal_state
+                next_states.append(ns)
+            next_states_dict[s] = next_states
+
+        probas_transformer = torch.zeros(
+            (config.n_actions * config.grid_dim**2, config.grid_dim**2 * config.grid_dim**2),
+            device=device
+        )
+
+        for s in range(config.grid_dim**2):
+            if s == goal_state:
+                for a in range(config.n_actions):
+                    probas_transformer[a * config.grid_dim**2 + s, s * config.grid_dim**2 + s] = 1
+            else:
+                for a, ns in enumerate(next_states_dict[s]):
+                    probas_transformer[a * config.grid_dim**2 + s, s * config.grid_dim**2 + ns] = 1
+
+        state_tensors = []
+        for s in range(config.grid_dim**2):
+            st = env.state_int_to_tuple(s, config, device)[0] 
+            state_tensors.append(st)
+        all_states_tensor = torch.stack(state_tensors)
+
+        tasks_data.append({
+            'task': task,
+            'init_state': init_state,
+            'goal_state': goal_state,
+            'opt_steps': sopt_dict.get(task, max_steps),
+            'original_q': q_matrix_dict[task].reshape(1, 4, 4, 4).to(device),
+            'all_states_tensor': all_states_tensor,
+            'probas_transformer': probas_transformer
+        })
+    
+    for ep in tqdm(range(num_eps), desc="Joint Training (Epochs)"):
+        random.shuffle(tasks_data)
+        optimizer.zero_grad(set_to_none=True)
+        
+        for t_data in tasks_data:
+            original_q = t_data['original_q']
+            message, q_recon = autoencoder(original_q)
+            flat_message = message.squeeze() 
+            
+            message_rep = flat_message.unsqueeze(0).expand(config.grid_dim**2, -1)
+            input_batch = torch.cat([t_data['all_states_tensor'], message_rep], dim=1)
+            Q = student(input_batch) 
+            
+            action_probas = torch.nn.functional.softmax(Q, dim=1)
+            action_probas_flat = action_probas.t().flatten().unsqueeze(0) 
+            matrix_big_flat = action_probas_flat @ t_data['probas_transformer'] 
+            matrix_big = matrix_big_flat.view(config.grid_dim**2, config.grid_dim**2).t()
+            
+            goal_proba = torch.linalg.matrix_power(matrix_big, t_data['opt_steps'])[t_data['goal_state'], t_data['init_state']]
+            
+            student_loss_p1 = (1 - kappa) * ((1 - goal_proba) ** 4)
+            student_loss_p2 = (kappa / mt.sqrt(config.grid_dim**2 * config.n_actions)) * torch.norm(Q, 2)
+            student_loss = student_loss_p1 + student_loss_p2
+            
+            recon_loss = torch.norm(original_q - q_recon, 2)
+            sparse_loss = torch.norm(message, 1)
+            
+            batch_loss = (1 - gamma_sparse) * recon_loss + gamma_sparse * sparse_loss + zeta_std * student_loss
+            
+            batch_loss.backward() 
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+    return autoencoder, student
     
 def run_evaluations(student, label_dict, wall_state_dict, message_dict, sopt_dict, config, device):
     
@@ -295,6 +389,60 @@ def run_evaluations(student, label_dict, wall_state_dict, message_dict, sopt_dic
                             matrix[ns, s] += action_probas[a, s // config.grid_dim, s % config.grid_dim]
                 
                 # compute state occupancy probabilities
+                probas = torch.zeros(config.grid_dim**2)
+                probas[init_state] = 1
+                for _ in range(max_steps):
+                    probas = matrix @ probas
+                
+                rates_list.append(probas[goal_state].item())
+    
+    print(f"Informed student:    {100*sum(informed_rates)/len(informed_rates):.2f}%")
+    print(f"Misinformed student: {100*sum(misinformed_rates)/len(misinformed_rates):.2f}%")
+    
+    return informed_rates, misinformed_rates
+
+def run_evaluations_inventory(student, label_dict, wall_state_dict, message_dict, sopt_dict, config, device):
+    
+    student.eval()
+    
+    informed_rates = []
+    misinformed_rates = []
+    
+    with torch.no_grad():
+        for task, (wall_index, init_state, goal_state, demand) in label_dict.items():
+            wall_states = wall_state_dict[wall_index]
+            
+            env = InventoryManagement(init_state, goal_state, wall_states, config, demand)
+            outcomes = env.get_outcomes()
+            next_states_dict = {s: [outcomes[(s,a)][0] if outcomes[(s,a)][0] is not None else goal_state 
+                                    for a in range(config.n_actions)] 
+                                for s in range(config.grid_dim**2)}
+            
+            sopt = sopt_dict[task]
+            max_steps = 2 * sopt
+            
+            correct_message = message_dict[(wall_index, init_state, goal_state, demand)]
+            wrong_task = random.choice([t for t in label_dict if t != task])
+            wrong_wall, wrong_init, wrong_goal, wrong_demand = label_dict[wrong_task]
+            wrong_message = message_dict[(wrong_wall, wrong_init, wrong_goal, wrong_demand)]
+            
+            for message, rates_list in [(correct_message, informed_rates), (wrong_message, misinformed_rates)]:
+                
+                action_probas = torch.zeros(config.n_actions, config.grid_dim, config.grid_dim)
+                for s in range(config.grid_dim**2):
+                    state = env.state_int_to_tuple(s, config, device)
+                    input_tensor = torch.cat((state[0], message), 0).unsqueeze(0)
+                    q_values = student(input_tensor).squeeze()
+                    action_probas[:, s // config.grid_dim, s % config.grid_dim] = torch.softmax(q_values, dim=0)
+                
+                matrix = torch.zeros(config.grid_dim**2, config.grid_dim**2)
+                for s in range(config.grid_dim**2):
+                    if s == goal_state:
+                        matrix[s, s] = 1
+                    else:
+                        for a, ns in enumerate(next_states_dict[s]):
+                            matrix[ns, s] += action_probas[a, s // config.grid_dim, s % config.grid_dim]
+                
                 probas = torch.zeros(config.grid_dim**2)
                 probas[init_state] = 1
                 for _ in range(max_steps):
