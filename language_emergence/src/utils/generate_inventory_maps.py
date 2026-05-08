@@ -1,262 +1,219 @@
 import os
+import sys
 import pickle
-import random
-from collections import deque
-from itertools import combinations
+import torch
+import numpy as np
+from dataclasses import dataclass
+from scipy.stats import poisson, binom, nbinom
 
+# ---------------------------------------------------------------------------
+# Path Configuration
+# ---------------------------------------------------------------------------
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-# map configuration ---------------------------------------------------
-UNITS_PER_ORDER = 4
-LAVA = True
-NUM_STATES = 16
-NUM_ACTIONS = 4
-DEMANDS = [1, 2, 3]
-DATASET_ID = 'v1'
-SEED = 42
+from configs.experiment_config import ExperimentConfig
 
-# map generation ------------------------------------------------------
-def check_reachability(initial_state, goal_state, wall_states, num_states, num_actions, demand, lava):
+# ---------------------------------------------------------------------------
+# Demand distribution descriptors
+# ---------------------------------------------------------------------------
 
-    wall_set = set(wall_states)
-    visited_states = set()
-    queue = deque([(initial_state, 0)])
+@dataclass(frozen=True)
+class DemandDistributionConfig:
+    dist_type: str
+    params: dict
+    category: str
 
-    while queue:
-        current_state, steps_taken = queue.popleft()
+    def __repr__(self):
+        param_str = ', '.join(f'{k}={v}' for k, v in self.params.items())
+        return f'{self.dist_type}({param_str})'
 
-        if current_state == goal_state:
-            return steps_taken
-        
-        if current_state in visited_states:
-            continue
-        
-        visited_states.add(current_state)
+def _d(dist_type, category, **params):
+    return DemandDistributionConfig(dist_type=dist_type, params=params, category=category)
 
-        for action in range(num_actions):
-            order_quantity = action * UNITS_PER_ORDER
-            next_state_candidate = current_state + order_quantity - demand
+DEMAND_DISTRIBUTIONS = [
+    _d('poisson', 'low', lam=1), _d('poisson', 'low', lam=2),
+    _d('uniform', 'low', low=0, high=2), _d('binomial', 'low', n=4, p=0.2),
+    _d('poisson', 'medium', lam=3), _d('poisson', 'medium', lam=4),
+    _d('binomial', 'medium', n=8, p=0.4), _d('uniform', 'medium', low=1, high=5),
+    _d('binomial', 'medium', n=6, p=0.5), _d('poisson', 'high', lam=6),
+    _d('poisson', 'high', lam=8), _d('uniform', 'high', low=3, high=8),
+    _d('uniform', 'high', low=4, high=10), _d('negative_binomial', 'bursty', n=3, p=0.4),
+    _d('negative_binomial', 'bursty', n=2, p=0.3), _d('zero_inflated_poisson', 'bursty', lam=4, pi=0.3),
+    _d('zero_inflated_poisson', 'bursty', lam=2, pi=0.4), _d('binomial', 'symmetric', n=10, p=0.5),
+    _d('uniform', 'symmetric', low=2, high=6), _d('uniform', 'symmetric', low=0, high=8),
+]
 
-            if lava: 
-                if next_state_candidate < 0:
-                    next_state = 0
-                elif next_state_candidate >= num_states:
-                    next_state = num_states - 1
-                elif next_state_candidate in wall_set:
-                    continue
-                else:
-                    next_state = next_state_candidate
-            else:
-                if next_state_candidate < 0 or next_state_candidate >= num_states or next_state_candidate in wall_set:
-                    continue
-                else:
-                    next_state = next_state_candidate
-                
-            if next_state not in visited_states:
-                queue.append((next_state, steps_taken + 1))    
+ORDER_MODES = {
+    'medium': [2, 4, 6],     # ID 0
+    'big': [6, 9, 12],       # ID 1
+    'small_big': [2, 6, 10], # ID 2
+    'fine': [1, 2, 3],       # ID 3
+    'coarse': [4, 8, 12],    # ID 4
+    'skewed': [1, 3, 8],     # ID 5
+}
 
-    return None
+ORDER_MODE_TO_ID = {name: i for i, name in enumerate(ORDER_MODES.keys())}
 
+GRID_SIZE = 4
+NUM_STATES = GRID_SIZE ** 2
+INIT_STATES = list(range(NUM_STATES))
+GOAL_STATE = -1
 
-def generate_wall_configs(num_states, max_walls, forbidden_states, min_walls=0):
-    available_states = [state for state in range(num_states) if state not in forbidden_states]
-    wall_configurations = []
+# ---------------------------------------------------------------------------
+# Optimized Solver
+# ---------------------------------------------------------------------------
 
-    for num_walls in range(min_walls, max_walls + 1):
-        if num_walls == 0:
-            wall_configurations.append([])
+def get_demand_pmf(dist_cfg, max_demand=32):
+    d_vals = np.arange(max_demand + 1)
+    p = dist_cfg.params
+    if dist_cfg.dist_type == 'poisson': probs = poisson.pmf(d_vals, p['lam'])
+    elif dist_cfg.dist_type == 'uniform':
+        mask = (d_vals >= p['low']) & (d_vals <= p['high'])
+        probs = np.where(mask, 1.0 / (p['high'] - p['low'] + 1), 0.0)
+    elif dist_cfg.dist_type == 'binomial': probs = binom.pmf(d_vals, p['n'], p['p'])
+    elif dist_cfg.dist_type == 'negative_binomial': probs = nbinom.pmf(d_vals, p['n'], p['p'])
+    elif dist_cfg.dist_type == 'zero_inflated_poisson':
+        probs = (1 - p['pi']) * poisson.pmf(d_vals, p['lam'])
+        probs[0] += p['pi']
+    else: probs = np.zeros_like(d_vals); probs[0] = 1.0
+    return torch.from_numpy(probs / probs.sum()).float()
+
+def solve_environment_q_matrix(demand_cfg, order_quantities, goal_state=-1, num_states=16, gamma=0.99, tol=1e-6):
+    config = ExperimentConfig()
+    pmf = get_demand_pmf(demand_cfg)
+    max_d = len(pmf) - 1
+    
+    order_sizes = torch.tensor([0] + order_quantities).view(-1, 1, 1) 
+    states = torch.arange(num_states).view(1, -1, 1)
+    demands = torch.arange(max_d + 1).view(1, 1, -1)
+    
+    available = states + order_sizes
+    next_states = torch.clamp(available - demands, 0, num_states - 1)
+    unmet = torch.clamp(demands - available, min=0)
+    
+    rewards = config.step_reward - (0.5 * next_states.float()) - (2.0 * unmet.float())
+    
+    V = torch.zeros(num_states)
+    has_goal = (0 <= goal_state < num_states)
+
+    for _ in range(1000):
+        # If no goal, v_next is always gamma * V. If goal, use terminal reward.
+        if has_goal:
+            is_goal_mask = (next_states == goal_state)
+            v_next = torch.where(is_goal_mask, torch.tensor(float(config.goal_reward)), gamma * V[next_states])
         else:
-            for combination in combinations(available_states, num_walls):
-                wall_configurations.append(list(combination))
+            v_next = gamma * V[next_states]
 
-    return wall_configurations
+        q_sa = torch.sum(pmf * (rewards + v_next), dim=2)
+        V_new = torch.max(q_sa, dim=0)[0]
+        
+        if has_goal:
+            V_new[goal_state] = config.goal_reward
+            
+        if torch.dist(V, V_new) < tol:
+            V = V_new
+            break
+        V = V_new
 
-def generate_inventory_maps(num_states, num_actions, min_walls, max_walls, demands, lava, dataset_id, seed):
-    random.seed(seed)
- 
-    if demands is None:
-        demands = [1, 2, 3, 4]
- 
-    initial_state = 0
-    forbidden_states = {initial_state}
-    all_wall_configurations = generate_wall_configs(num_states, max_walls, forbidden_states, min_walls)
- 
-    wall_state_dict = {}
-    label_dict = {}
-    wall_config_index = 0
-    task_id = 0
-    num_skipped = 0
- 
-    for wall_states in all_wall_configurations:
-        wall_set = set(wall_states)
- 
-        possible_goal_states = [
-            state for state in range(1, num_states)
-            if state != initial_state and state not in wall_set
-        ]
- 
-        config_has_valid_task = False
- 
-        for demand in demands:
-            for goal_state in possible_goal_states:
-                shortest_path_length = check_reachability(
-                    initial_state, goal_state, wall_states,
-                    num_states, num_actions, demand, lava
-                )
- 
-                if shortest_path_length is None:
-                    num_skipped += 1
-                    continue
- 
-                if not config_has_valid_task:
-                    wall_state_dict[wall_config_index] = wall_states
-                    config_has_valid_task = True
- 
-                label_dict[task_id] = [wall_config_index, initial_state, goal_state, demand]
-                task_id += 1
- 
-        if config_has_valid_task:
-            wall_config_index += 1
- 
-    print(f"Generated {task_id} tasks across {wall_config_index} wall configurations")
-    print(f"Skipped {num_skipped} unreachable tasks")
- 
-    return label_dict, wall_state_dict
+    # Final Q assembly
+    if has_goal:
+        final_v_next = torch.where(next_states == goal_state, torch.tensor(float(config.goal_reward)), gamma * V[next_states])
+    else:
+        final_v_next = gamma * V[next_states]
+        
+    q_matrix = torch.sum(pmf * (rewards + final_v_next), dim=2)
+    return q_matrix.view(1, 8, 8)
 
+# ---------------------------------------------------------------------------
+# Data Saving & Execution
+# ---------------------------------------------------------------------------
 
-def generate_and_save_all(num_states=16, num_actions=4, demands=None, lava=True, dataset_id='v1', seed=42):
-    if demands is None:
-        demands = [1, 2, 3]
+def is_train_task(demand_cfg, order_mode) -> bool:
+    train_dist_types = {'poisson', 'uniform'}
+    train_categories = {'low', 'medium', 'high'}
+    train_modes = {'medium', 'fine'}
+    return (demand_cfg.dist_type in train_dist_types and 
+            demand_cfg.category in train_categories and
+            order_mode in train_modes)
 
-    print("Generating training set (0 and 1 walls)...")
-    train_label_dict, train_wall_state_dict = generate_inventory_maps(
-        num_states=num_states, num_actions=num_actions, min_walls=0, max_walls=1,
-        demands=demands, lava=lava, dataset_id=dataset_id, seed=seed
-    )
+def save_dataset(tasks: list, split: str):
+    base_data_path = os.path.join(PROJECT_ROOT, 'src', 'data', 'inventory')
+    dirs = {
+        'lab': os.path.join(base_data_path, 'label dictionaries'),
+        'env': os.path.join(base_data_path, 'env dictionaries'),
+        'qma': os.path.join(base_data_path, 'q matrix dictionaries'),
+        'wal': os.path.join(base_data_path, 'wall state dictionaries')
+    }
+    for d in dirs.values(): os.makedirs(d, exist_ok=True)
 
-    print("\nGenerating test set (exactly 2 walls)...")
-    test_label_dict, test_wall_state_dict = generate_inventory_maps(
-        num_states=num_states, num_actions=num_actions, min_walls=2, max_walls=2,
-        demands=demands, lava=lava, dataset_id=dataset_id, seed=seed
-    )
+    label_dict, env_dict, qmat_dict = {}, {}, {}
+    env_cache = {} 
 
-    train_label_dict, test_label_dict = validate_maps(
-        train_label_dict, train_wall_state_dict,
-        test_label_dict, test_wall_state_dict
-    )
+    for new_id, t in enumerate(tasks):
+        # Add a 0 at the beginning to act as the wall_index
+        label_dict[new_id] = (
+            0,                                     # wall_index (placeholder)
+            t['init_state'],                       # init_state
+            t['goal_state'],                       # goal_state
+            ORDER_MODE_TO_ID[t['order_mode_name']] # order_mode_id
+        )
+        
+        elbl = t['env_label']
+        if elbl not in env_cache:
+            q_mat = solve_environment_q_matrix(t['demand_dist'], t['order_quantities'])
+            env_cache[elbl] = q_mat
+            env_dict[elbl] = {
+                'demand_dist': t['demand_dist'], 
+                'order_quantities': t['order_quantities'],
+                'category': t['demand_dist'].category
+            }
+        
+        qmat_dict[new_id] = env_cache[elbl]
 
-    save_maps(train_label_dict, train_wall_state_dict, dataset_id, split='train')
-    save_maps(test_label_dict, test_wall_state_dict, dataset_id, split='test')
-
-def save_maps(label_dict, wall_state_dict, dataset_id, split):
-    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data'))
-    os.makedirs(os.path.join(base_path, 'inventory_labels'), exist_ok=True)
-
-    label_path = os.path.join(base_path, 'inventory_labels', f'inventory_labels_{dataset_id}_{split}.pkl')
-    wall_path = os.path.join(base_path, 'inventory_labels', f'wall_states_{dataset_id}_{split}.pkl')
-
-    with open(label_path, 'wb') as f:
+    # Matching the requested code pattern: {config.qmat_read_code}
+    code = f"{split}_{GRID_SIZE}x{GRID_SIZE}"
+    
+    # Save Labels
+    with open(os.path.join(dirs['lab'], f"q_matrices_labels{code}.pkl"), 'wb') as f:
         pickle.dump(label_dict, f)
-    with open(wall_path, 'wb') as f:
-        pickle.dump(wall_state_dict, f)
 
-    print(f"Saved label_dict -> {label_path}")
-    print(f"Saved wall_state_dict -> {wall_path}")
+    # Save Wall States (Empty dummy to satisfy file-loading requirements)
+    with open(os.path.join(dirs['wal'], f"wall_states{code}.pkl"), 'wb') as f:
+        pickle.dump({0: []}, f)
 
+    # Save Q-Matrices
+    with open(os.path.join(dirs['qma'], f"q_matrices{code}.pkl"), 'wb') as f:
+        pickle.dump(qmat_dict, f)
 
-def load_maps(dataset_id, split):
-    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data'))
-    label_path = os.path.join(base_path, 'inventory_labels', f'inventory_labels_{dataset_id}_{split}.pkl')
-    wall_path = os.path.join(base_path, 'inventory_labels', f'wall_states_{dataset_id}_{split}.pkl')
+    # Metadata
+    with open(os.path.join(dirs['env'], f"inventory_envs{code}.pkl"), 'wb') as f:
+        pickle.dump(env_dict, f)
+            
+    print(f"Saved {split} dataset with {len(tasks)} tasks.")
 
-    with open(label_path, 'rb') as f:
-        label_dict = pickle.load(f)
-    with open(wall_path, 'rb') as f:
-        wall_state_dict = pickle.load(f)
+def generate_and_save_all():
+    train_tasks, test_tasks = [], []
+    for d_idx, demand_cfg in enumerate(DEMAND_DISTRIBUTIONS):
+        for o_mode, o_quantities in ORDER_MODES.items():
+            env_label = f"d{d_idx}_{o_mode}"
+            for init_state in INIT_STATES:
+                task = {
+                    'env_label': env_label, 
+                    'demand_dist': demand_cfg, 
+                    'order_quantities': list(o_quantities), 
+                    'order_mode_name': o_mode,
+                    'init_state': init_state, 
+                    'goal_state': GOAL_STATE
+                }
+                if is_train_task(demand_cfg, o_mode):
+                    train_tasks.append(task)
+                else:
+                    test_tasks.append(task)
 
-    return label_dict, wall_state_dict
-
-# map validation ------------------------------------------------------
-def validate_maps(train_label_dict, train_wall_state_dict, test_label_dict, test_wall_state_dict):
-    print("\n--- Validation ---")
-    any_warnings = False
-
-    # check to make sure no wall config appears in both train and test
-    train_wall_configs = {
-        tuple(sorted(walls)) for walls in train_wall_state_dict.values()
-    }
-    test_wall_configs = {
-        tuple(sorted(walls)) for walls in test_wall_state_dict.values()
-    }
-    overlapping_wall_configs = train_wall_configs & test_wall_configs
-    if overlapping_wall_configs:
-        print(f"{len(overlapping_wall_configs)} wall configs appear in both train and test sets")
-        any_warnings = True
-
-    # check no duplicate tasks within train set
-    train_task_signatures = {}
-    train_duplicates = []
-    for task_id, (wall_config_index, initial_state, goal_state, demand) in train_label_dict.items():
-        wall_config = tuple(sorted(train_wall_state_dict[wall_config_index]))
-        signature = (wall_config, initial_state, goal_state, demand)
-        if signature in train_task_signatures:
-            train_duplicates.append((task_id, train_task_signatures[signature]))
-        else:
-            train_task_signatures[signature] = task_id
-    if train_duplicates:
-        print(f"{len(train_duplicates)} duplicate tasks found in train set. removing")
-        for duplicate_task_id, _ in train_duplicates:
-            del train_label_dict[duplicate_task_id]
-        any_warnings = True
-
-    # check to make sure no duplicate tasks within test set
-    test_task_signatures = {}
-    test_duplicates = []
-    for task_id, (wall_config_index, initial_state, goal_state, demand) in test_label_dict.items():
-        wall_config = tuple(sorted(test_wall_state_dict[wall_config_index]))
-        signature = (wall_config, initial_state, goal_state, demand)
-        if signature in test_task_signatures:
-            test_duplicates.append((task_id, test_task_signatures[signature]))
-        else:
-            test_task_signatures[signature] = task_id
-    if test_duplicates:
-        print(f"({len(test_duplicates)} duplicate tasks found in test set. removing")
-        for duplicate_task_id, _ in test_duplicates:
-            del test_label_dict[duplicate_task_id]
-        any_warnings = True
-
-    # check that. no task appears in both train and test
-    overlapping_tasks = set(train_task_signatures.keys()) & set(test_task_signatures.keys())
-    if overlapping_tasks:
-        print(f"{len(overlapping_tasks)} task appear in both train and test. removing from test")
-        for signature in overlapping_tasks:
-            duplicate_task_id = test_task_signatures[signature]
-            del test_label_dict[duplicate_task_id]
-        any_warnings = True
-
-    # chack that all wall config indices in label_dict exist in wall_state_dict
-    for split_name, label_dict, wall_state_dict in [
-        ('train', train_label_dict, train_wall_state_dict),
-        ('test',  test_label_dict,  test_wall_state_dict)
-    ]:
-        missing_indices = {
-            wall_config_index
-            for wall_config_index, _, _, _ in label_dict.values()
-            if wall_config_index not in wall_state_dict
-        }
-        if missing_indices:
-            print(f"{split_name} label_dict references {len(missing_indices)} missing wall configindices")
-            any_warnings = True
-
-    if not any_warnings:
-        print("All checks passed")
-
-    print(f"Train: {len(train_label_dict)} tasks, {len(train_wall_state_dict)} wall configs")
-    print(f"Test:  {len(test_label_dict)} tasks, {len(test_wall_state_dict)} wall configs")
-    print(f"Ratio: 1:{len(test_label_dict) / len(train_label_dict):.1f} tasks, "
-          f"1:{len(test_wall_state_dict) / len(train_wall_state_dict):.1f} wall configs")
-
-    return train_label_dict, test_label_dict
-
+    save_dataset(train_tasks, 'training')
+    save_dataset(test_tasks, 'test')
 
 if __name__ == '__main__':
     generate_and_save_all()

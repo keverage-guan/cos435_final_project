@@ -146,3 +146,21 @@ class SquareGridworld():
                 for b in range(m_len):
                     state_tensors[j, i * m_len + b] = s_tup
         return state_tensors
+
+    def get_transition_probs(self, n_samples: int = 1) -> torch.Tensor:
+        """
+        Exact (deterministic) transition probabilities.
+        Returns a tensor of shape (n_states, n_actions, n_states) with 0/1 entries.
+        n_samples is accepted for API compatibility with stochastic envs but ignored.
+        """
+        probs = torch.zeros(self.n_states, self.n_actions, self.n_states)
+        for s in range(self.n_states):
+            if s == self.goal_state:
+                probs[s, :, s] = 1.0          # absorbing
+            else:
+                for a in range(self.n_actions):
+                    ns, _ = self.get_outcome(s, a)
+                    if ns is None:
+                        ns = self.goal_state
+                    probs[s, a, ns] = 1.0
+        return probs
