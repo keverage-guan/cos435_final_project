@@ -1,0 +1,3 @@
+Table 6 | Bonferroni-corrected t-tests: informed vs. misinformed (N=0 comparisons)
+Condition                           Group  p (raw)    p (Bonf.)   sig
+-------------------------------------------------------------------

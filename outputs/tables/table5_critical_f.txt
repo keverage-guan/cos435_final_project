@@ -1,0 +1,8 @@
+Table 5 | Critical F-values for goal groupings (dfn=14, dfd=195)
+Significance (a)       F_crit
+------------------------------
+0.1                      1.54
+0.05                     1.74
+0.01                     2.17
+0.005                    2.35
+0.001                    2.74
