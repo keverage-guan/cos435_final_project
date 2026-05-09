@@ -13,6 +13,7 @@ class ExperimentConfig:
         self.n_actions = 4
         self.student_init = 0
         self.lava = False
+        self.demand = 3
         
         self.step_reward = -0.1
         self.goal_reward = 2.0

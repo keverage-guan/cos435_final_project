@@ -431,7 +431,11 @@ def value_iteration_all_tasks(label_dict, wall_state_dict, config, device):
     sopt_dict = {}
     for task, (wall_index, init_state, goal_state, demand) in label_dict.items():
         wall_states = wall_state_dict[wall_index]
+<<<<<<< HEAD
         env = InventoryManagement(init_state, goal_state, wall_states,demand, config)
+=======
+        env = InventoryManagement(init_state, goal_state, wall_states, config)
+>>>>>>> ea86e4b56e24de0a40c62697ea61c9c6b27d24af
         perfect_qdict[task] = value_iteration(env, config, device)
         sopt_dict[task] = abs(goal_state - init_state)
     return perfect_qdict, sopt_dict
@@ -446,7 +450,11 @@ def q_matrix_generator_inventory(label_dict, wall_state_dict, perfect_qdict, con
         wall_states = wall_state_dict[wall_index]
         print(f"task is {task}")
 
+<<<<<<< HEAD
         env = InventoryManagement(init_state, goal_state, wall_states, demand, config)
+=======
+        env = InventoryManagement(init_state, goal_state, wall_states, config)
+>>>>>>> ea86e4b56e24de0a40c62697ea61c9c6b27d24af
         outcomes = env.get_outcomes()
 
         transition_index_dict, batches_list = transition_memories(env, init_state, goal_state, wall_states, config, device)
@@ -523,7 +531,11 @@ def generate_q_matrices_inventory(config, device):
         qmat_path = os.path.join(BASE_DIR, f"data/inventory/q matrix dictionaries/q_matrices{config.qmat_read_code}.pkl")
         with open(qmat_path, 'rb') as f:
             q_matrices = pickle.load(f)
+<<<<<<< HEAD
         perfect_qdict, sopt_dict = value_iteration_all_tasks(label_dict, wall_state_dict, config, device)
+=======
+        perfect_qdict, sopt_dict = value_iteration(label_dict, wall_state_dict, config, device)
+>>>>>>> ea86e4b56e24de0a40c62697ea61c9c6b27d24af
         return q_matrices, label_dict, wall_state_dict, sopt_dict
 
     perfect_qdict, sopt_dict = value_iteration_all_tasks(label_dict, wall_state_dict, config, device)
